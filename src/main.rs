@@ -3,7 +3,7 @@ use eframe::egui;
 use frame_studio::{
     process::{ProcessGroup, command},
     render,
-    storage::{Storage, load_project},
+    storage::Storage,
     ui::FrameApp,
 };
 use std::{
@@ -45,8 +45,13 @@ fn run() -> anyhow::Result<()> {
             args.len() == 3,
             "Usage: frame --render project.frame.json output.mp4"
         );
-        let p = load_project(&PathBuf::from(&args[1]))?;
-        let assets = storage.assets();
+        frame_studio::media::seed(&storage.root)?;
+        let mut doc = frame_studio::document::Document::read(&PathBuf::from(&args[1]))?;
+        let mut assets = storage.assets();
+        for asset in doc.restore(&storage, &assets)? {
+            assets.insert(asset.id.clone(), asset);
+        }
+        let p = doc.project;
         let folder = storage.root.join("jobs").join(frame_studio::model::uid());
         render::export(
             &p,
@@ -58,12 +63,23 @@ fn run() -> anyhow::Result<()> {
         )?;
         return Ok(());
     }
-    let app = FrameApp::new(storage)?;
+    let mut app = FrameApp::new(storage)?;
     let screenshot = if args.first().map(String::as_str) == Some("--ui-smoke") {
-        anyhow::ensure!(args.len() == 2, "Usage: frame --ui-smoke screenshot.png");
+        anyhow::ensure!(
+            (2..=3).contains(&args.len()),
+            "Usage: frame --ui-smoke screenshot.png [graphics|motion|formats]"
+        );
+        if let Some(view) = args.get(2) {
+            app.prepare_smoke_view(view)?;
+        }
         Some(PathBuf::from(&args[1]))
     } else {
-        anyhow::ensure!(args.is_empty(), "Unknown command-line arguments");
+        if args.len() == 1 && !args[0].starts_with('-') {
+            let doc = frame_studio::document::Document::read(&PathBuf::from(&args[0]))?;
+            app.restore_document(doc);
+        } else {
+            anyhow::ensure!(args.is_empty(), "Usage: frame [project.frame]");
+        }
         None
     };
     let options = eframe::NativeOptions {

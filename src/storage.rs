@@ -99,18 +99,19 @@ impl Storage {
     }
 }
 pub fn load_project(path: &Path) -> Result<Project> {
-    let bytes = fs::read(path).context("Could not read project")?;
-    ensure!(
-        bytes.len() <= 32 * 1024 * 1024,
-        "Project JSON exceeds 32 MB"
-    );
-    let p: Project = serde_json::from_slice(&bytes).context("Invalid project JSON")?;
-    p.validate()?;
-    Ok(p)
+    crate::document::project_from_file(path)
 }
+
 pub fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(value)?;
-    let parent = path.parent().context("Missing parent folder")?;
+    ensure!(
+        bytes.len() <= 32 * 1024 * 1024,
+        "Project or metadata exceeds 32 MB"
+    );
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
     let temp = parent.join(format!(".{}.tmp", uid()));
     let result = (|| -> Result<()> {

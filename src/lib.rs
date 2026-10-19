@@ -1,6 +1,8 @@
+pub mod document;
 pub mod edit;
 pub mod media;
 pub mod model;
+pub mod presets;
 pub mod preview;
 pub mod process;
 pub mod render;

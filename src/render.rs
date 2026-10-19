@@ -49,6 +49,10 @@ fn animated(c: &Clip, p: &str, clock: &str) -> String {
     if keys.is_empty() {
         return prop(&c.transform, p).to_string();
     }
+    let constant = prop(&keys[0].transform, p);
+    if keys.iter().all(|key| prop(&key.transform, p) == constant) {
+        return constant.to_string();
+    }
     let mut out = prop(&keys.last().unwrap().transform, p).to_string();
     for pair in keys.windows(2).rev() {
         let (a, b) = (&pair[0], &pair[1]);
@@ -67,99 +71,323 @@ fn animated(c: &Clip, p: &str, clock: &str) -> String {
         prop(&keys[0].transform, p)
     )
 }
+// Alpha is uniform across a layer, so evaluate it once per output frame.
+// colorchannelmixer has a runtime alpha command; geq would evaluate the whole
+// keyframe expression separately for every pixel of every frame.
+fn opacity_filter(c: &Clip, phase: f64, duration: f64, fps: u32, index: usize) -> String {
+    let mut keys = c.keyframes.clone();
+    keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+    let alpha = |time: f64| {
+        if keys.is_empty() {
+            return c.transform.opacity;
+        }
+        if time <= keys[0].time {
+            return keys[0].transform.opacity;
+        }
+        for pair in keys.windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            if time <= b.time {
+                return a.transform.opacity
+                    + (b.transform.opacity - a.transform.opacity) * (time - a.time)
+                        / (b.time - a.time);
+            }
+        }
+        keys.last().unwrap().transform.opacity
+    };
+    let initial = alpha(phase);
+    let mut previous = initial;
+    let mut commands = String::new();
+    for frame in 1..(duration * fps as f64).ceil() as u32 {
+        let t = frame as f64 / fps as f64;
+        let value = alpha(phase + t);
+        if (value - previous).abs() > 1e-12 {
+            commands += &format!(
+                "{:.9} colorchannelmixer@alpha{index} aa {value};",
+                (t - 0.000001).max(0.)
+            );
+            previous = value;
+        }
+    }
+    let mixer = format!(",colorchannelmixer@alpha{index}=aa={initial},format=rgba");
+    if commands.is_empty() {
+        mixer
+    } else {
+        format!(",sendcmd=c='{commands}'{mixer}")
+    }
+}
+
 pub fn graphic_image(c: &Clip, path: &Path, w: u32, h: u32) -> Result<()> {
     let mut pixels = RgbaImage::new(w, h);
     let color = parse_color(&c.color);
+    let (wf, hf) = (w as f32, h as f32);
+    let mut labels: Vec<(String, f32, f32, f32, bool)> = vec![];
     if c.kind == Kind::Title {
-        draw_text(
-            &mut pixels,
-            &c.text,
-            c.font_size as f32 * w as f32 / 1920.,
-            w as f32 / 2.,
-            h as f32 / 2.,
-            color,
-            true,
-        )?;
+        labels.push((c.text.clone(), c.font_size as f32, 0.5, 0.5, true));
     } else {
         let mut pixmap = tiny_skia::Pixmap::new(w, h).context("Graphic canvas too large")?;
         let mut paint = tiny_skia::Paint::default();
-        paint.set_color_rgba8(color[0], color[1], color[2], color[3]);
+        paint.set_color_rgba8(color[0], color[1], color[2], 255);
         paint.anti_alias = true;
+        let secondary = parse_color(&c.secondary_color);
+        let mut bg = tiny_skia::Paint::default();
+        bg.set_color_rgba8(secondary[0], secondary[1], secondary[2], 235);
+        let rect = |x: f32, y: f32, width: f32, height: f32| {
+            tiny_skia::Rect::from_xywh(x * wf, y * hf, width * wf, height * hf).unwrap()
+        };
         let mut pb = tiny_skia::PathBuilder::new();
-        let (wf, hf) = (w as f32, h as f32);
+        let line = |pb: &mut tiny_skia::PathBuilder, x: f32, y: f32, x2: f32, y2: f32| {
+            pb.move_to(x * wf, y * hf);
+            pb.line_to(x2 * wf, y2 * hf);
+        };
+        let panel = match c.graphic {
+            Graphic::LowerThird => Some((0.06, 0.72, 0.65, 0.19)),
+            Graphic::Callout => Some((0.43, 0.22, 0.5, 0.2)),
+            Graphic::Stat => Some((0.28, 0.27, 0.44, 0.46)),
+            Graphic::Equation => Some((0.15, 0.3, 0.7, 0.4)),
+            Graphic::Step => Some((0.2, 0.35, 0.65, 0.3)),
+            _ => None,
+        };
+        if let Some((x, y, rw, rh)) = panel {
+            fill_graphic_rect(
+                &mut pixmap,
+                rect(x, y, rw, rh),
+                &bg,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+            fill_graphic_rect(
+                &mut pixmap,
+                rect(x, y, 0.005, rh),
+                &paint,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
         match c.graphic {
             Graphic::Arrow => {
-                pb.move_to(wf * 0.3, hf * 0.5);
-                pb.line_to(wf * 0.7, hf * 0.5);
-                pb.move_to(wf * 0.62, hf * 0.4);
-                pb.line_to(wf * 0.7, hf * 0.5);
-                pb.line_to(wf * 0.62, hf * 0.6);
+                line(&mut pb, 0.3, 0.5, 0.7, 0.5);
+                line(&mut pb, 0.62, 0.4, 0.7, 0.5);
+                line(&mut pb, 0.7, 0.5, 0.62, 0.6);
             }
-            Graphic::Circle => {
-                if let Some(rect) =
-                    tiny_skia::Rect::from_xywh(wf * 0.35, hf * 0.23, wf * 0.3, hf * 0.54)
-                {
-                    pb.push_oval(rect);
+            Graphic::Circle => pb.push_oval(rect(0.35, 0.23, 0.3, 0.54)),
+            Graphic::Rectangle => pb.push_rect(rect(0.25, 0.25, 0.5, 0.5)),
+            Graphic::LowerThird => {
+                labels.push((c.text.clone(), c.font_size as f32, 0.085, 0.815, false))
+            }
+            Graphic::Callout => {
+                line(&mut pb, 0.25, 0.68, 0.38, 0.42);
+                line(&mut pb, 0.38, 0.42, 0.55, 0.42);
+                pb.push_oval(rect(0.242, 0.666, 0.016, 0.028));
+                labels.push((c.text.clone(), c.font_size as f32, 0.46, 0.32, false));
+            }
+            Graphic::Dimension => {
+                line(&mut pb, 0.23, 0.55, 0.77, 0.55);
+                for x in [0.23, 0.77] {
+                    line(&mut pb, x, 0.4, x, 0.7);
+                }
+                line(&mut pb, 0.27, 0.51, 0.23, 0.55);
+                line(&mut pb, 0.23, 0.55, 0.27, 0.59);
+                line(&mut pb, 0.73, 0.51, 0.77, 0.55);
+                line(&mut pb, 0.77, 0.55, 0.73, 0.59);
+                labels.push((c.text.clone(), c.font_size as f32, 0.5, 0.4, true));
+            }
+            Graphic::Axes => {
+                line(&mut pb, 0.25, 0.22, 0.25, 0.75);
+                line(&mut pb, 0.25, 0.75, 0.8, 0.75);
+                line(&mut pb, 0.22, 0.28, 0.25, 0.22);
+                line(&mut pb, 0.25, 0.22, 0.28, 0.28);
+                line(&mut pb, 0.76, 0.7, 0.8, 0.75);
+                line(&mut pb, 0.8, 0.75, 0.76, 0.8);
+                for i in 1..6 {
+                    let x = 0.25 + i as f32 * 0.08;
+                    line(&mut pb, x, 0.74, x, 0.77);
+                }
+                labels.push((c.text.clone(), c.font_size as f32, 0.52, 0.87, true));
+            }
+            Graphic::Grid => {
+                for i in 0..=10 {
+                    let u = 0.1 + i as f32 * 0.08;
+                    line(&mut pb, u, 0.1, u, 0.9);
+                    line(&mut pb, 0.1, u, 0.9, u);
                 }
             }
-            Graphic::Rectangle => {
-                pb.push_rect(
-                    tiny_skia::Rect::from_xywh(wf * 0.25, hf * 0.25, wf * 0.5, hf * 0.5).unwrap(),
-                );
+            Graphic::Step => {
+                let mut parts = c.text.splitn(2, '\n');
+                labels.push((parts.next().unwrap_or("01").into(), 112., 0.3, 0.5, true));
+                labels.push((
+                    parts.next().unwrap_or("BUILD STEP").into(),
+                    c.font_size as f32,
+                    0.4,
+                    0.5,
+                    false,
+                ));
             }
-            Graphic::LowerThird => {
-                let r =
-                    tiny_skia::Rect::from_xywh(wf * 0.06, hf * 0.72, wf * 0.59, hf * 0.18).unwrap();
-                let mut bg = tiny_skia::Paint::default();
-                bg.set_color_rgba8(14, 21, 24, 225);
-                pixmap.fill_rect(r, &bg, tiny_skia::Transform::identity(), None);
-                pixmap.fill_rect(
-                    tiny_skia::Rect::from_xywh(wf * 0.06, hf * 0.72, wf * 0.006, hf * 0.18)
-                        .unwrap(),
-                    &paint,
+            Graphic::Stat => {
+                let mut parts = c.text.splitn(2, '\n');
+                labels.push((
+                    parts.next().unwrap_or("ALTITUDE").into(),
+                    c.font_size as f32 * 0.65,
+                    0.5,
+                    0.39,
+                    true,
+                ));
+                labels.push((
+                    parts.next().unwrap_or("1,250 m").into(),
+                    c.font_size as f32 * 1.7,
+                    0.5,
+                    0.56,
+                    true,
+                ));
+            }
+            Graphic::Progress => {
+                fill_graphic_rect(
+                    &mut pixmap,
+                    rect(0.2, 0.5, 0.6, 0.065),
+                    &bg,
+                    tiny_skia::Transform::identity(),
+                    None,
+                );
+                if c.graphic_value >= 0.0001 {
+                    fill_graphic_rect(
+                        &mut pixmap,
+                        rect(0.2, 0.5, 0.6 * c.graphic_value as f32, 0.065),
+                        &paint,
+                        tiny_skia::Transform::identity(),
+                        None,
+                    );
+                }
+                labels.push((
+                    format!("{}   {:.0}%", c.text, c.graphic_value * 100.),
+                    c.font_size as f32,
+                    0.5,
+                    0.4,
+                    true,
+                ));
+            }
+            Graphic::Rocket => {
+                pb.move_to(wf * 0.5, hf * 0.17);
+                pb.line_to(wf * 0.55, hf * 0.32);
+                pb.line_to(wf * 0.55, hf * 0.72);
+                pb.line_to(wf * 0.45, hf * 0.72);
+                pb.line_to(wf * 0.45, hf * 0.32);
+                pb.close();
+                line(&mut pb, 0.45, 0.55, 0.39, 0.76);
+                line(&mut pb, 0.39, 0.76, 0.45, 0.72);
+                line(&mut pb, 0.55, 0.55, 0.61, 0.76);
+                line(&mut pb, 0.61, 0.76, 0.55, 0.72);
+                line(&mut pb, 0.47, 0.75, 0.5, 0.9);
+                line(&mut pb, 0.5, 0.9, 0.53, 0.75);
+                line(&mut pb, 0.45, 0.32, 0.55, 0.32);
+            }
+            Graphic::Equation => labels.push((c.text.clone(), c.font_size as f32, 0.5, 0.5, true)),
+            Graphic::Comparison => {
+                let mut parts = c.text.splitn(2, '\n');
+                for (y, value, label) in [
+                    (0.4, 1., parts.next().unwrap_or("SIMULATION")),
+                    (
+                        0.65,
+                        c.graphic_value as f32,
+                        parts.next().unwrap_or("FLIGHT DATA"),
+                    ),
+                ] {
+                    fill_graphic_rect(
+                        &mut pixmap,
+                        rect(0.2, y, 0.6, 0.065),
+                        &bg,
+                        tiny_skia::Transform::identity(),
+                        None,
+                    );
+                    if value >= 0.0001 {
+                        fill_graphic_rect(
+                            &mut pixmap,
+                            rect(0.2, y, 0.6 * value, 0.065),
+                            &paint,
+                            tiny_skia::Transform::identity(),
+                            None,
+                        );
+                    }
+                    labels.push((
+                        label.into(),
+                        c.font_size as f32 * 0.65,
+                        0.2,
+                        y - 0.06,
+                        false,
+                    ));
+                }
+            }
+        }
+        if let Some(path) = pb.finish() {
+            if c.fill
+                && matches!(
+                    c.graphic,
+                    Graphic::Circle | Graphic::Rectangle | Graphic::Rocket
+                )
+            {
+                pixmap.fill_path(
+                    &path,
+                    &bg,
+                    tiny_skia::FillRule::Winding,
                     tiny_skia::Transform::identity(),
                     None,
                 );
             }
-        }
-        if let Some(path) = pb.finish() {
             pixmap.stroke_path(
                 &path,
                 &paint,
                 &tiny_skia::Stroke {
-                    width: (wf / 180.).max(3.),
+                    width: (c.stroke_width as f32 * wf / 1920.).max(0.5),
+                    line_cap: tiny_skia::LineCap::Round,
                     ..Default::default()
                 },
                 tiny_skia::Transform::identity(),
                 None,
             );
         }
-        for (x, y, p) in pixels.enumerate_pixels_mut() {
-            let at = ((y * w + x) * 4) as usize;
-            let a = pixmap.data()[at + 3];
+        for (pixel, bytes) in pixels
+            .pixels_mut()
+            .zip(pixmap.data().as_chunks::<4>().0.iter())
+        {
+            let a = bytes[3];
             if a > 0 {
-                *p = Rgba([
-                    ((pixmap.data()[at] as u32 * 255) / a as u32).min(255) as u8,
-                    ((pixmap.data()[at + 1] as u32 * 255) / a as u32).min(255) as u8,
-                    ((pixmap.data()[at + 2] as u32 * 255) / a as u32).min(255) as u8,
+                *pixel = Rgba([
+                    ((bytes[0] as u32 * 255) / a as u32).min(255) as u8,
+                    ((bytes[1] as u32 * 255) / a as u32).min(255) as u8,
+                    ((bytes[2] as u32 * 255) / a as u32).min(255) as u8,
                     a,
                 ]);
             }
         }
-        if c.graphic == Graphic::LowerThird {
-            draw_text(
-                &mut pixels,
-                &c.text.chars().take(80).collect::<String>(),
-                40. * wf / 1920.,
-                wf * 0.085,
-                hf * 0.81,
-                color,
-                false,
-            )?;
-        }
+    }
+    for (text, size, x, y, center) in labels {
+        draw_text(
+            &mut pixels,
+            &text,
+            size * wf / 1920.,
+            wf * x,
+            hf * y,
+            color,
+            center,
+        )?;
     }
     pixels.save(path)?;
     Ok(())
+}
+// The generic path rasterizer handles subpixel rectangles reliably. The specialized
+// AA rectangle path in tiny-skia 0.11 asserts on narrow accent strips at thumbnail sizes.
+fn fill_graphic_rect(
+    pixmap: &mut tiny_skia::Pixmap,
+    rect: tiny_skia::Rect,
+    paint: &tiny_skia::Paint<'_>,
+    transform: tiny_skia::Transform,
+    mask: Option<&tiny_skia::Mask>,
+) {
+    pixmap.fill_path(
+        &tiny_skia::PathBuilder::from_rect(rect),
+        paint,
+        tiny_skia::FillRule::Winding,
+        transform,
+        mask,
+    );
 }
 fn parse_color(s: &str) -> [u8; 4] {
     let n = u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0xffffff);
@@ -174,11 +402,14 @@ fn draw_text(
     color: [u8; 4],
     center: bool,
 ) -> Result<()> {
-    let font = fontdue::Font::from_bytes(
-        include_bytes!("../assets/fonts/DejaVuSans.ttf").as_slice(),
-        fontdue::FontSettings::default(),
-    )
-    .map_err(|e| anyhow::anyhow!(e))?;
+    static FONT: std::sync::OnceLock<fontdue::Font> = std::sync::OnceLock::new();
+    let font = FONT.get_or_init(|| {
+        fontdue::Font::from_bytes(
+            include_bytes!("../assets/fonts/DejaVuSans.ttf").as_slice(),
+            fontdue::FontSettings::default(),
+        )
+        .expect("Bundled DejaVu font must be valid")
+    });
     let lines: Vec<_> = text.lines().collect();
     let line_height = size * 1.25;
     for (i, line) in lines.iter().enumerate() {
@@ -229,8 +460,8 @@ pub fn build_graph(
 ) -> Result<Graph> {
     p.validate()?;
     ensure!(
-        duration > 0. && duration.is_finite(),
-        "Add clips before rendering"
+        duration > 0. && duration <= 30. + 1e-8 && duration.is_finite(),
+        "Render windows must be greater than zero and at most 30 seconds"
     );
     fs::create_dir_all(folder)?;
     let (w, h, fps) = (p.width, p.height, p.fps);
@@ -469,10 +700,7 @@ pub fn build_graph(
             );
         }
         if c.transform.opacity != 1. || c.keyframes.iter().any(|k| k.transform.opacity != 1.) {
-            chain += &format!(
-                ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({})'",
-                animated(c, "opacity", &format!("(T+{phase})"))
-            );
+            chain += &opacity_filter(c, phase, dur, fps, idx);
         }
         if c.transition == Transition::Fade {
             if phase == 0. {

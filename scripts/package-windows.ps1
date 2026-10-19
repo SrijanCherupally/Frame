@@ -16,13 +16,14 @@ if ($FfmpegDir) {
         throw "Supply -FfmpegLicenseDir with the license and corresponding-source materials for the FFmpeg build you are distributing."
     }
 }
-cargo test --locked --lib --test editing
+cargo test --locked --lib --test editing --test documents
 if ($LASTEXITCODE -ne 0) { throw "Rust editing tests failed." }
 cargo build --locked --release
 if ($LASTEXITCODE -ne 0) { throw "Native Windows build failed." }
 New-Item -ItemType Directory -Path $packagePath | Out-Null
 Copy-Item "target/release/frame.exe" (Join-Path $packagePath "Frame.exe")
 Copy-Item "README.md" $packagePath
+Copy-Item "examples/projects" (Join-Path $packagePath "Templates") -Recurse
 Copy-Item "THIRD-PARTY-LICENSES.txt" $packagePath
 Copy-Item "assets/fonts/LICENSE-DejaVu.txt" $packagePath
 if ($FfmpegDir) {

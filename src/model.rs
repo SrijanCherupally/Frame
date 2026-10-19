@@ -37,6 +37,16 @@ pub enum Graphic {
     Circle,
     Rectangle,
     LowerThird,
+    Callout,
+    Dimension,
+    Axes,
+    Grid,
+    Step,
+    Stat,
+    Progress,
+    Rocket,
+    Equation,
+    Comparison,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -94,6 +104,10 @@ pub struct Clip {
     pub font_size: u32,
     pub color: String,
     pub graphic: Graphic,
+    pub stroke_width: f64,
+    pub fill: bool,
+    pub secondary_color: String,
+    pub graphic_value: f64,
     pub keyframes: Vec<Keyframe>,
 }
 impl Default for Clip {
@@ -125,6 +139,10 @@ impl Default for Clip {
             font_size: 64,
             color: "#ffffff".into(),
             graphic: Graphic::Arrow,
+            stroke_width: 10.,
+            fill: false,
+            secondary_color: "#172127".into(),
+            graphic_value: 0.72,
             keyframes: vec![],
         }
     }
@@ -245,6 +263,8 @@ impl Project {
                 ("Warmth", c.warmth, -1., 1.),
                 ("Blur", c.blur, 0., 20.),
                 ("Shutter", c.shutter, 0.1, 1.),
+                ("Stroke width", c.stroke_width, 1., 40.),
+                ("Graphic value", c.graphic_value, 0., 1.),
                 ("Fade duration", c.fade_duration, 0.05, 5.),
             ] {
                 ensure!(n.is_finite() && n >= lo && n <= hi, "{name} out of range");
@@ -258,9 +278,11 @@ impl Project {
             );
             ensure!((12..=200).contains(&c.font_size), "Invalid font size");
             ensure!(
-                c.color.len() == 7
-                    && c.color.starts_with('#')
-                    && c.color[1..].bytes().all(|b| b.is_ascii_hexdigit()),
+                [&c.color, &c.secondary_color]
+                    .iter()
+                    .all(|color| color.len() == 7
+                        && color.starts_with('#')
+                        && color[1..].bytes().all(|b| b.is_ascii_hexdigit())),
                 "Invalid color"
             );
             if matches!(c.kind, Kind::Video | Kind::Audio | Kind::Image) {

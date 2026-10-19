@@ -544,3 +544,178 @@ fn preview_audio_graph_outputs_non_silent_pcm() {
             .any(|s| i16::from_le_bytes([s[0], s[1]]).abs() > 100)
     );
 }
+
+#[test]
+fn explanation_graphics_are_visible_and_animated_scenes_export() {
+    let temp = TempDir::new().unwrap();
+    for &(graphic, _, text) in frame_studio::presets::GRAPHICS {
+        let path = temp.path().join(format!("{graphic:?}.png"));
+        let c = Clip {
+            kind: Kind::Graphic,
+            graphic,
+            text: text.into(),
+            ..Clip::default()
+        };
+        render::graphic_image(&c, &path, 640, 360).unwrap();
+        let img = image::open(path).unwrap().to_rgba8();
+        let visible = img.pixels().filter(|p| p[3] > 0).count();
+        assert!(visible > 100, "{graphic:?} must render visible content");
+        assert!(
+            visible < 640 * 360 / 2,
+            "{graphic:?} must preserve transparent surroundings"
+        );
+    }
+    for (index, &(scene, _, _)) in frame_studio::presets::SCENES.iter().enumerate() {
+        let mut clips = scene.clips(0., 30);
+        for c in &mut clips {
+            c.duration = 0.6;
+        }
+        let p = Project {
+            width: 320,
+            height: 240,
+            clips,
+            ..Project::default()
+        };
+        let output = render(&p, &HashMap::new(), temp.path(), &format!("scene-{index}"));
+        let info = probe_output(&output);
+        assert!(
+            (info["format"]["duration"]
+                .as_str()
+                .unwrap()
+                .parse::<f64>()
+                .unwrap()
+                - 0.6)
+                .abs()
+                < 0.1
+        );
+        let graph = render::build_graph(
+            &p,
+            &HashMap::new(),
+            &temp.path().join(format!("preview-{index}")),
+            0.,
+            0.6,
+            Mode::PreviewVideo,
+        )
+        .unwrap();
+        let bytes = ProcessGroup::default()
+            .run(
+                graph.command().args([
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "pipe:1",
+                ]),
+                None,
+            )
+            .unwrap();
+        assert!(!bytes.is_empty());
+    }
+}
+
+#[test]
+fn graphics_handle_small_canvases_thin_lines_and_near_zero_values() {
+    let temp = TempDir::new().unwrap();
+    for &(graphic, _, text) in frame_studio::presets::GRAPHICS {
+        for (width, stroke, value) in [
+            (240, 1., 0.),
+            (320, 1., 1e-100),
+            (320, 10., 0.72),
+            (240, 40., 1.),
+        ] {
+            let c = Clip {
+                kind: Kind::Graphic,
+                graphic,
+                text: text.into(),
+                stroke_width: stroke,
+                graphic_value: value,
+                fill: true,
+                ..Clip::default()
+            };
+            let path = temp
+                .path()
+                .join(format!("{graphic:?}-{width}-{stroke}.png"));
+            render::graphic_image(&c, &path, width, 240).unwrap();
+        }
+    }
+}
+
+#[test]
+fn animated_opacity_matches_static_alpha_and_seeking_mid_animation() {
+    let temp = TempDir::new().unwrap();
+    let c = Clip {
+        kind: Kind::Graphic,
+        graphic: Graphic::Rectangle,
+        fill: true,
+        secondary_color: "#ffffff".into(),
+        duration: 1.,
+        keyframes: vec![
+            Keyframe {
+                time: 0.,
+                transform: Transform {
+                    opacity: 0.,
+                    ..Transform::default()
+                },
+            },
+            Keyframe {
+                time: 1.,
+                transform: Transform::default(),
+            },
+        ],
+        ..Clip::default()
+    };
+    let p = Project {
+        width: 320,
+        height: 240,
+        clips: vec![c],
+        ..Project::default()
+    };
+    let pixels = |project: &Project, phase: f64, duration: f64, frames: &str, name: &str| {
+        let graph = render::build_graph(
+            project,
+            &HashMap::new(),
+            &temp.path().join(name),
+            phase,
+            duration,
+            Mode::PreviewVideo,
+        )
+        .unwrap();
+        ProcessGroup::default()
+            .run(
+                graph.command().args([
+                    "-frames:v",
+                    frames,
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "pipe:1",
+                ]),
+                None,
+            )
+            .unwrap()
+    };
+    let full = pixels(&p, 0., 0.6, "16", "full");
+    let mut reference = p.clone();
+    reference.clips[0].keyframes.clear();
+    reference.clips[0].transform.opacity = 0.5;
+    let half = pixels(&reference, 0., 1. / 30., "1", "static");
+    let seek = pixels(&p, 0.5, 1. / 30., "1", "seek");
+    let frame = 320 * 240 * 3;
+    let center = (120 * 320 + 160) * 3;
+    assert_eq!(full.len(), frame * 16);
+    assert_eq!(half.len(), frame);
+    assert_eq!(seek.len(), frame);
+    assert!(
+        full[15 * frame + center] > full[center] + 40,
+        "Opacity must animate in the actual decoded frames"
+    );
+    for channel in 0..3 {
+        assert!(
+            (full[15 * frame + center + channel] as i16 - half[center + channel] as i16).abs() <= 2
+        );
+        assert!((seek[center + channel] as i16 - half[center + channel] as i16).abs() <= 2);
+    }
+}

@@ -2,6 +2,8 @@
 
 Frame is now a compiled **Rust desktop application**. It uses **egui/eframe** for a native GPU-rendered interface and **FFmpeg** for decoding, filtering, audio mixing, and export. There is no Electron, browser engine, JavaScript, npm, Node.js, Python service, HTTP server, or web build step in the application.
 
+[Workspace preview](docs/screenshots/workspace.png) · [Format templates](docs/screenshots/formats.png) · [Explanation graphics](docs/screenshots/graphics.png) · [Rendered rocket scene](docs/screenshots/explanation.png)
+
 The previous Electron implementation is preserved in Git history at `2a3d1b4`. The current source replaces it rather than wrapping it.
 
 ## Build and run
@@ -56,11 +58,12 @@ The app opens an original illustrated rocket project so its controls can be trie
 - **Arrange:** add a library item with `+`, double-click it, or drag it to a timeline track. Drag clips to move; drag their edges to trim. Properties also provides timing and track assignment. Footage, B-roll, titles/graphics, voiceover, and music have five editable tracks.
 - **Cut:** `S` splits at the playhead. Arrow keys step one project frame; Shift + arrows step ten. Remove Frames deletes a selected time interval across tracks and closes the gap. Undo and redo cover editing and property changes.
 - **Retime:** use Properties → Timing to enter a positive speed multiplier or target duration. **Four hours into 20 seconds is 720×.** Speed changes preserve the selected source range and rescale animation times. Practical limits are at least one output frame and a 24-hour timeline, rather than a small preset multiplier cap.
-- **Explain:** add text, subtitles, technical labels, arrows, ellipses, focus rectangles, and lower thirds. Set text/color/size and animate position, scale, rotation, and opacity with linear keyframes.
+- **Explain:** browse **Graphics** for 14 editable explanation elements, including callouts, measurements, axes, grids, step numbers, telemetry, progress indicators, equations, comparison bars, and rocket diagrams. Customize text, font size, colors, line weight, shape fill, and data values in Properties. Start with a ready-made rocket forces, build chapter, or flight report scene.
+- **Animate:** select any visual layer and open **Motion** for nine presets: soft reveal, rise, slides, pop emphasis, slow push/pull, float, and turn. Smooth entrances are sampled into editable transform keyframes; adjust or remove those keyframes in Properties. Applying a preset replaces that clip’s animation and supports undo. Splitting and retiming preserve the sampled motion path.
 - **Finish:** adjust brightness, contrast, saturation, temperature, blur, ellipse/rectangle masks, and fade/slide/zoom/wipe entrances. Fade also affects the clip's ending and audio. Overlap layers to reveal footage beneath an animated clip.
 - **Export:** choose a resolution, select a new `.mp4` filename, and render H.264/AAC from original media. Progress and cancellation are available. Existing output files are rejected to protect previous renders.
 
-Space plays/pauses, Delete removes a selected clip, Ctrl/Cmd + Z undoes, Ctrl/Cmd + Shift + Z redoes, and Ctrl/Cmd + S saves. Project settings support horizontal, vertical/Shorts, and square canvases, up to 4K and 60 fps.
+Space plays/pauses, Delete removes a selected clip, Ctrl/Cmd + Z undoes, Ctrl/Cmd + Shift + Z redoes, and Ctrl/Cmd + S saves. Choose **New project** in the project menu to browse 12 format templates with pixel size and fps together: Full HD, UHD/4K, cinematic 24 fps, 60 fps action, Shorts/Reels, square, 4:5 portrait, PAL, and lightweight HD. Click the format badge in the top bar to change an existing project. Settings offers custom even dimensions from 240–3840 pixels and frame rates up to 60 fps. A format change that would make an existing clip shorter than one frame is rejected without modifying the project.
 
 ## Clean Timelapse
 
@@ -74,7 +77,7 @@ Temporal blending and deflicker are export effects. Native preview uses the same
 
 ## Storage, responsiveness, and recovery
 
-The original file size is not read into Rust UI memory. Project objects contain metadata and paths. UI previews use a two-frame bounded channel at a 640-pixel canvas width, with stale-generation frames discarded after a seek. Video proxies are at most 960×540. The media browser virtualizes visible rows and limits its thumbnail texture cache to 64 entries. Codec work, export, and media probing run outside the UI thread.
+The original file size is not read into Rust UI memory. Project objects contain metadata and paths. UI previews use a two-frame bounded channel at a 640-pixel canvas width, with stale-generation frames discarded after a seek. Video proxies are at most 960×540. The media browser virtualizes visible rows and limits its thumbnail texture cache to 64 entries. Codec work, export, media probing, and imported-project media restoration run outside the UI thread. Animated opacity is evaluated once per output frame and applied with FFmpeg runtime alpha commands, avoiding a keyframe expression evaluation for every pixel. Constant animated properties are reduced to constants; motion presets omit redundant straight-line keyframes.
 
 There is one probing worker, one proxy worker, and one export at a time. FFmpeg decoder/filter/encoder parallelism is bounded. Long exports render timeline windows of at most 30 seconds; dense windows shrink to avoid opening every project source at once. No more than 24 intersecting clip inputs are admitted per render window. Completed chunks are joined without a second video encode. Temporary chunks are removed after a successful export.
 
@@ -82,11 +85,21 @@ These choices keep RAM use separate from total original-file bytes. They do **no
 
 The library, projects, snapshots, and jobs live in the platform's per-user local data directory. Set `FRAME_DATA_DIR` to an absolute path on another drive to choose a different media cache. A filesystem lock prevents two app instances from editing the same library. Original files must remain available for export; cached proxies can be used for preview while an original is offline. Reconnect a disconnected drive or relink the original. The application currently limits projects to 2,000 clips and 200 transform keyframes per clip.
 
-Project JSON is saved with create-new temporary files, a data flush, and atomic replacement. A previous valid save is retained for recovery. A project snapshot is saved before creating/opening/loading a different project; snapshots can also be saved/restored from the project menu. Pending edits are saved when closing. If a close-time save fails, the app stays open so a backup can be made. Use **Download project backup** to create a `.frame.json` file. It stores edits and media IDs, not footage.
+Project JSON is saved with create-new temporary files, a data flush, and atomic replacement. A previous valid save is retained for recovery. A project snapshot is saved before creating/opening/loading a different project; snapshots can also be saved/restored from the project menu. Pending edits are saved when closing. If a close-time save fails, the app stays open so a backup can be made. Use **Save .frame** in the toolbar or **Save project as .frame** in the project menu to create a reusable project document.
 
-Subprocesses have explicit ownership and are killed/reaped on cancellation and shutdown. An interrupted proxy job is retried when the library reopens. Job state and diagnostic FFmpeg logs live in `jobs/<id>/`; interrupted exports must be started again. Partial-export resumption, automatic cache eviction, and full multi-project media migration are not implemented.
+Subprocesses have explicit ownership and are killed/reaped on cancellation and shutdown. An interrupted proxy job is retried when the library reopens. Job state and diagnostic FFmpeg logs live in `jobs/<id>/`; interrupted exports must be started again. Partial-export resumption and automatic cache eviction are not implemented.
 
-The v1 `.frame.json` project format and existing media metadata are readable by the Rust version. To reuse this checkout's earlier library, set `FRAME_DATA_DIR` to the existing absolute `.frame-data` path. No automatic move or deletion of original footage occurs. Project backups opened against a different library still need their missing original IDs relinked.
+The v1 `.frame.json` project format and existing media metadata are readable by the Rust version. To reuse this checkout's earlier library, set `FRAME_DATA_DIR` to the existing absolute `.frame-data` path. No automatic move or deletion of original footage occurs. Legacy `.frame.json` backups contain only media IDs, so a different library may require relinking their originals. New `.frame` documents include media references to restore those links automatically.
+
+## Save and reopen a `.frame` project
+
+**Save .frame** writes the complete editable project: canvas/fps, clip order and timing, source ranges, speed, track visibility/mutes, color, masks, transitions, graphics parameters, transform keyframes, playhead, timeline zoom, selected clip, and a manifest of the referenced original media. Exact floating-point JSON round trips preserve keyframe values. Only media used by that project is included in its manifest.
+
+Open it from the project menu, drop the `.frame` file onto the window, or launch `frame my-project.frame`. Frame first snapshots the current project. It restores the document and rebuilds proxies in the background when needed. Imported media IDs that conflict with an unrelated local asset are remapped without overwriting that asset. Offline originals remain in the library with a **Retry / relink** action.
+
+The document **does not embed footage or caches**. Keep the original files available. Sources under the saved project's folder use relative references: move that folder and its media together to preserve links. Sources elsewhere use their original paths; moving to another drive or computer may require relinking them. This keeps a project small even when its footage spans hundreds of gigabytes. A `.frame` file is a versioned JSON document, capped at 32 MB; old `.frame.json` files remain readable.
+
+Media-free example projects are included in [examples/projects](examples/projects): rocket forces, a build chapter, and a flight report. They open as fully editable timelines and need no imported footage. The Windows ZIP includes them in its **Templates** folder. Regenerate them with `cargo run --locked --example create_templates`.
 
 ## Validation
 
@@ -101,6 +114,8 @@ The tests include:
 
 - Headless native UI drawing, keyboard splitting/undo, snapshots, and saving pending edits at shutdown.
 - Pure Rust retiming, source offsets, animation-preserving split/ripple edits, malformed project validation, atomic recovery, and library locking.
+- Fresh-library `.frame` restoration after moving its folder, offline sources, ID collisions, workspace recovery, exact keyframe round trips, all format/motion presets, and all explanation scenes.
+- Visible transparent renders of every graphic (including small canvases, thin lines and nearly zero values), real FFmpeg exports/previews of animated scenes, and pixel comparisons proving animated opacity matches static opacity and mid-animation seeks.
 - Real FFmpeg probing, disk-linked originals and decodable proxies, composited audio/video, masks, keyframes, all implemented transitions, motion-blended pixel differences, slow motion, cancellation, missing sources, output preservation, streamed native preview frames, and non-silent preview PCM audio.
 - A real four-hour sparse-frame file rendered to 20 seconds at 720×. This validates long timestamps and output duration, **not** high-bitrate four-hour performance.
 
@@ -113,13 +128,15 @@ Inspect tools without opening a window:
 Render a saved project against the selected media library:
 
 ```sh
-./target/release/frame --render project.frame.json new-output.mp4
+./target/release/frame --render project.frame new-output.mp4
 ```
 
 For a native-window smoke test in a graphical session:
 
 ```sh
 ./target/release/frame --ui-smoke screenshot.png
+./target/release/frame --ui-smoke graphics.png graphics
+./target/release/frame --ui-smoke formats.png formats
 ```
 
 This launches the actual OpenGL native window, requests a framebuffer screenshot after four seconds, and closes. In Linux CI, run it under an X11 virtual display. Unit UI tests need no browser or graphical server. Real media tests need FFmpeg/FFprobe.
@@ -136,7 +153,8 @@ Frame is an early working editor, not a Resolve/Premiere replacement. Still miss
 - `src/preview.rs`: cancellable bounded native frame streaming and optional audio output.
 - `src/render.rs`: FFmpeg graphs, keyframes, generated graphics, temporal effects, chunked export.
 - `src/process.rs`: tool discovery, subprocess groups, cancellation, bounded diagnostic capture.
-- `src/storage.rs`: atomic saves, recovery copies, snapshots, exclusive library lock.
+- `src/storage.rs`, `src/document.rs`: atomic saves, recovery, portable project documents, media restoration, exclusive library lock.
+- `src/presets.rs`, `src/ui/tools.rs`: video formats, motion presets, explanation scenes, and native galleries.
 - `tests/editing.rs`, `tests/native.rs`: pure editing and actual media regression tests.
 - `scripts/package-windows.ps1`: portable Windows app packaging.
 

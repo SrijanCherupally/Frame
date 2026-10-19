@@ -1,7 +1,11 @@
+mod tools;
+
 use crate::{
+    document::{Document, Workspace},
     edit::{self, History},
     media::{self, Asset},
     model::*,
+    presets,
     preview::{Preview, PreviewEvent},
     process::ProcessGroup,
     render::{self, Job},
@@ -41,7 +45,7 @@ enum Event {
     Files(Vec<PathBuf>),
     Message(String),
     Job(Job),
-    Project(Project),
+    Document(Document, Vec<Asset>),
 }
 
 struct Import {
@@ -57,6 +61,7 @@ enum Tab {
     Graphics,
     Transitions,
     Effects,
+    Motion,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -104,6 +109,8 @@ pub struct FrameApp {
     saved: String,
     export_window: bool,
     settings_window: bool,
+    template_window: bool,
+    template_new: bool,
     help_window: bool,
     range_window: bool,
     snapshots_window: bool,
@@ -260,6 +267,8 @@ impl FrameApp {
             saved: "All changes saved".into(),
             export_window: false,
             settings_window: false,
+            template_window: false,
+            template_new: false,
             help_window: false,
             range_window: false,
             snapshots_window: false,
@@ -277,7 +286,23 @@ impl FrameApp {
 
         style.visuals.panel_fill = PANEL;
 
-        style.visuals.window_fill = Color32::from_rgb(27, 31, 33);
+        style.visuals.window_fill = Color32::from_rgb(27, 31, 36);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(12);
+        for widget in [
+            &mut style.visuals.widgets.inactive,
+            &mut style.visuals.widgets.hovered,
+            &mut style.visuals.widgets.active,
+        ] {
+            widget.corner_radius = egui::CornerRadius::same(7);
+        }
+        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(34, 40, 46);
+        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(34, 40, 46);
+        style.visuals.widgets.inactive.fg_stroke =
+            Stroke::new(1.0_f32, Color32::from_rgb(220, 225, 226));
+        style.visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(49, 62, 49);
+        style.visuals.widgets.inactive.bg_stroke =
+            Stroke::new(1.0_f32, Color32::from_rgb(48, 56, 61));
+        style.visuals.window_stroke = Stroke::new(1.0_f32, Color32::from_rgb(49, 58, 63));
 
         style.visuals.extreme_bg_color = Color32::from_rgb(16, 19, 21);
 
@@ -585,14 +610,19 @@ impl FrameApp {
 
     fn open_project(&self) {
         let tx = self.send.clone();
+        let assets = self.assets.clone();
+        let root = self.storage.root.clone();
 
         thread::spawn(move || {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Frame project", &["json"])
+                .add_filter("Frame project", &["frame", "json"])
                 .pick_file()
             {
-                let event = match load_project(&path) {
-                    Ok(p) => Event::Project(p),
+                let event = match Document::read(&path).and_then(|mut doc| {
+                    let restored = doc.restore_at(&root, &assets)?;
+                    Ok((doc, restored))
+                }) {
+                    Ok((doc, restored)) => Event::Document(doc, restored),
                     Err(e) => Event::Message(e.to_string()),
                 };
 
@@ -602,18 +632,42 @@ impl FrameApp {
     }
 
     fn backup(&self) {
-        let p = self.project.clone();
+        let doc = Document::capture(
+            &self.project,
+            &self.assets,
+            Workspace {
+                playhead: self.time,
+                zoom: self.zoom,
+                selected: self.selected.clone(),
+            },
+        );
 
         let tx = self.send.clone();
-
+        let name: String = self
+            .project
+            .name
+            .chars()
+            .filter(|ch| !ch.is_control() && !"<>:\"/\\|?*".contains(*ch))
+            .take(100)
+            .collect();
+        let filename = format!(
+            "{}.frame",
+            if name.trim().is_empty() {
+                "project"
+            } else {
+                name.trim()
+            }
+        );
         thread::spawn(move || {
             if let Some(path) = rfd::FileDialog::new()
-                .set_file_name("project.frame.json")
+                .add_filter("Frame project", &["frame"])
+                .set_file_name(filename)
                 .save_file()
             {
-                let event = match atomic_json(&path, &p) {
+                let event = match doc.save(&path) {
                     Ok(()) => Event::Message(
-                        "Project backup saved. Originals remain linked on disk.".into(),
+                        "Frame project saved with timeline, graphics, keyframes and media links."
+                            .into(),
                     ),
                     Err(e) => Event::Message(e.to_string()),
                 };
@@ -760,6 +814,25 @@ impl FrameApp {
                         self.notify("Library limit: 2,000 media items");
                     } else {
                         for path in files {
+                            if path
+                                .extension()
+                                .is_some_and(|ext| ext.eq_ignore_ascii_case("frame"))
+                            {
+                                let tx = self.send.clone();
+                                let assets = self.assets.clone();
+                                let root = self.storage.root.clone();
+                                thread::spawn(move || {
+                                    let event = match Document::read(&path).and_then(|mut doc| {
+                                        let restored = doc.restore_at(&root, &assets)?;
+                                        Ok((doc, restored))
+                                    }) {
+                                        Ok((doc, restored)) => Event::Document(doc, restored),
+                                        Err(e) => Event::Message(e.to_string()),
+                                    };
+                                    let _ = tx.send(event);
+                                });
+                                continue;
+                            }
                             if let Some(tx) = &self.imports {
                                 let _ = tx.send(Import { path, id: None });
                             }
@@ -769,7 +842,7 @@ impl FrameApp {
 
                 Event::Message(msg) => self.notify(msg),
                 Event::Job(job) => self.job = Some(job),
-                Event::Project(p) => self.switch(p),
+                Event::Document(doc, restored) => self.finish_document(doc, restored),
             }
         }
 
@@ -953,13 +1026,14 @@ impl FrameApp {
 
                     ui.label(RichText::new("frame").size(26.).strong());
 
-                    ui.label(RichText::new("NATIVE").size(9.).color(GREEN));
+                    ui.label(RichText::new("STUDIO").size(9.).color(GREEN));
 
                     ui.separator();
 
                     ui.menu_button(self.project.name.clone(), |ui| {
                         if ui.button("New project").clicked() {
-                            self.switch(Project::default());
+                            self.template_new = true;
+                            self.template_window = true;
 
                             ui.close();
                         }
@@ -970,7 +1044,7 @@ impl FrameApp {
                             ui.close();
                         }
 
-                        if ui.button("Download project backup…").clicked() {
+                        if ui.button("Save project as .frame…").clicked() {
                             self.backup();
 
                             ui.close();
@@ -1023,6 +1097,20 @@ impl FrameApp {
                             self.help_window = true;
                         }
 
+                        if ui.button("Save .frame").clicked() {
+                            self.backup();
+                        }
+                        if ui
+                            .button(format!(
+                                "{} × {} · {} fps",
+                                self.project.width, self.project.height, self.project.fps
+                            ))
+                            .on_hover_text("Project format and presets")
+                            .clicked()
+                        {
+                            self.template_new = false;
+                            self.template_window = true;
+                        }
                         if ui.button("Settings").clicked() {
                             self.settings_window = true;
                         }
@@ -1033,7 +1121,7 @@ impl FrameApp {
 
     fn library(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("rail")
-            .exact_width(72.)
+            .exact_width(84.)
             .resizable(false)
             .show(ctx, |ui| {
                 ui.style_mut().spacing.button_padding.x = 3.;
@@ -1045,10 +1133,11 @@ impl FrameApp {
                     (Tab::Text, "T", "Text"),
                     (Tab::Graphics, "◇", "Graphics"),
                     (Tab::Transitions, "▱", "Transitions"),
+                    (Tab::Motion, "↗", "Motion"),
                     (Tab::Effects, "≋", "Effects"),
                 ] {
                     let response = ui.add_sized(
-                        [58., 56.],
+                        [70., 62.],
                         egui::Button::new(
                             RichText::new(format!("{icon}\n{name}"))
                                 .size(11.)
@@ -1081,6 +1170,7 @@ impl FrameApp {
                     Tab::Graphics => "Explanation graphics",
                     Tab::Transitions => "Transitions",
                     Tab::Effects => "Color & effects",
+                    Tab::Motion => "Motion studio",
                 });
 
                 ui.add_space(13.);
@@ -1302,41 +1392,8 @@ impl FrameApp {
                             }
                         }
 
-                        Tab::Graphics => {
-                            ui.label(
-                                RichText::new("Make the complicated feel simple.")
-                                    .small()
-                                    .color(MUTED),
-                            );
-
-                            for (g, label) in [
-                                (Graphic::Arrow, "→   Direction arrow"),
-                                (Graphic::Circle, "○   Highlight ellipse"),
-                                (Graphic::Rectangle, "□   Focus frame"),
-                                (Graphic::LowerThird, "T   Lower third"),
-                            ] {
-                                ui.add_space(10.);
-
-                                if ui
-                                    .add_sized(
-                                        [ui.available_width(), 55.],
-                                        egui::Button::new(label),
-                                    )
-                                    .clicked()
-                                {
-                                    self.add_layer(
-                                        Kind::Graphic,
-                                        g,
-                                        if g == Graphic::LowerThird {
-                                            "YOUR ANNOTATION"
-                                        } else {
-                                            "Graphic"
-                                        },
-                                        64,
-                                    );
-                                }
-                            }
-                        }
+                        Tab::Graphics => self.graphics_library(ui),
+                        Tab::Motion => self.motion_library(ui),
 
                         Tab::Transitions => {
                             ui.label(
@@ -1465,7 +1522,7 @@ impl FrameApp {
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new("NATIVE · 640px PROXY").size(9.).color(MUTED));
+                        ui.label(RichText::new("DRAFT PREVIEW").size(9.).color(MUTED));
                     });
                 });
 
@@ -1642,7 +1699,7 @@ match self.property_tab {
 
     if matches!(c.kind,Kind::Title|Kind::Graphic){
 ui.label(RichText::new("Text & appearance").strong());
-if (c.kind==Kind::Title||c.graphic==Graphic::LowerThird)&& ui.add(egui::TextEdit::multiline(&mut c.text).char_limit(3000).desired_rows(3).desired_width(ui.available_width())).changed(){
+if ui.add(egui::TextEdit::multiline(&mut c.text).char_limit(3000).desired_rows(3).desired_width(ui.available_width())).changed(){
 c.name=c.text.lines().next().unwrap_or("Text").chars().take(70).collect();
 }
 
@@ -1653,11 +1710,12 @@ if ui.color_edit_button_srgb(&mut rgb).changed(){
 c.color=format!("#{:02x}{:02x}{:02x}",rgb[0],rgb[1],rgb[2]);
 }
 
-if c.kind==Kind::Title{
+{
 ui.add(egui::DragValue::new(&mut c.font_size).range(12..=200).suffix(" px"));
 }
 }
 );
+self.appearance_controls(ui, &mut c);
 ui.separator();
 }
 
@@ -1764,8 +1822,11 @@ edit::add_keyframe(&mut c,(self.time-old.start).clamp(0.,old.duration),self.proj
 }
 }
 );
+if ui.button("Browse motion presets →").clicked(){self.tab=Tab::Motion;}
+if !c.keyframes.is_empty() && ui.small_button("Clear animation").clicked(){c.transform=c.value((self.time-c.start).clamp(0.,c.duration));c.keyframes.clear();}
 ui.label(RichText::new("Add a keyframe, move the playhead, then change the transform.").small().color(MUTED));
 let mut remove=None;
+egui::ScrollArea::vertical().id_salt("keyframe_list").max_height(130.).show(ui,|ui|{
 for(i,k)in c.keyframes.iter().enumerate(){
 ui.horizontal(|ui|{
 if ui.small_button(format!("◇ {}",timecode(k.time,self.project.fps))).clicked(){
@@ -1779,6 +1840,7 @@ remove=Some(i);
 );
 }
 
+});
 if let Some(i)=remove{
 c.keyframes.remove(i);
 }
@@ -2503,30 +2565,9 @@ ui.label(RichText::new("Choose a new filename. Existing videos are never overwri
 
                 ui.add_space(10.);
 
-                egui::ComboBox::from_id_salt("canvas")
-                    .selected_text(format!("{} × {}", self.project.width, self.project.height))
-                    .show_ui(ui, |ui| {
-                        for (w, h, label) in [
-                            (1920, 1080, "YouTube · 1080p"),
-                            (3840, 2160, "YouTube · 4K"),
-                            (1080, 1920, "Shorts · vertical"),
-                            (1080, 1080, "Square"),
-                        ] {
-                            if ui
-                                .selectable_label(
-                                    self.project.width == w && self.project.height == h,
-                                    label,
-                                )
-                                .clicked()
-                            {
-                                self.project.width = w;
-
-                                self.project.height = h;
-                            }
-                        }
-                    });
-
-                ui.add(egui::Slider::new(&mut self.project.fps, 12..=60).text("Frame rate"));
+                if ui.button("Browse video format presets…").clicked() {self.template_new=false;self.template_window=true;}
+                ui.horizontal(|ui| {ui.label("Width");ui.add(egui::DragValue::new(&mut self.project.width).range(240..=3840).speed(2.));ui.label("Height");ui.add(egui::DragValue::new(&mut self.project.height).range(240..=3840).speed(2.));});
+                egui::ComboBox::from_id_salt("project_fps").selected_text(format!("{} fps",self.project.fps)).show_ui(ui,|ui|{for fps in [12,15,24,25,30,48,50,60]{ui.selectable_value(&mut self.project.fps,fps,format!("{fps} fps"));}});
 
                 ui.add_space(10.);
 
@@ -2548,7 +2589,7 @@ ui.label(RichText::new("Choose a new filename. Existing videos are never overwri
                         self.project = old;
 
                         self.notify(
-                            "These settings would make an existing clip shorter than one frame",
+                            "Use even dimensions from 240 to 3840. Every clip must last at least one frame at the chosen fps.",
                         );
                     }
                 }
@@ -2684,7 +2725,7 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
 
                     ui.label(RichText::new(&self.last_error).color(Color32::LIGHT_RED));
 
-                    if ui.button("Download project backup…").clicked() {
+                    if ui.button("Save project as .frame…").clicked() {
                         self.backup();
                     }
 
@@ -2719,6 +2760,7 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
         self.viewer(ctx);
 
         self.dialogs(ctx);
+        self.format_dialog(ctx);
     }
 }
 
@@ -2921,6 +2963,47 @@ mod tests {
         assert_eq!(app.project.clips.len(), 6);
 
         app.project.validate().unwrap();
+    }
+
+    #[test]
+    fn galleries_and_portable_workspace_draw_in_the_native_editor() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut app = FrameApp::new(Storage::open(temp.path().join("library")).unwrap()).unwrap();
+        let ctx = egui::Context::default();
+        FrameApp::configure(&ctx);
+        for view in ["graphics", "motion", "formats"] {
+            app.prepare_smoke_view(view).unwrap();
+            let output = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+                app.draw(ctx)
+            });
+            assert!(output.shapes.len() > 30);
+        }
+        assert!(app.thumb_cache.contains_key("graphic-Rocket"));
+        let mut p = Project {
+            name: "Restored explanation".into(),
+            clips: presets::Scene::Forces.clips(0., 30),
+            ..Project::default()
+        };
+        p.muted_tracks = vec![4];
+        let selected = p.clips[1].id.clone();
+        let path = temp.path().join("explanation.frame");
+        Document::capture(
+            &p,
+            &HashMap::new(),
+            Workspace {
+                playhead: 2.,
+                zoom: 0.1,
+                selected: Some(selected.clone()),
+            },
+        )
+        .save(&path)
+        .unwrap();
+        app.restore_document(Document::read(&path).unwrap());
+        assert_eq!(app.project, p);
+        assert_eq!(app.time, 2.);
+        assert_eq!(app.zoom, 0.1);
+        assert_eq!(app.selected.as_ref(), Some(&selected));
+        assert!(!app.storage.snapshots().is_empty());
     }
 
     #[test]
