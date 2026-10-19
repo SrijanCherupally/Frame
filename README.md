@@ -1,124 +1,143 @@
-# Frame Studio
+# Frame — native Rust video editor
 
-A local desktop video editor for build montages, rocket launches, and explanation graphics. This is a working early version, built with Electron, React, Python, and FFmpeg. It does not yet replace Resolve or Premiere, and it has not been benchmarked with a hundred-gigabyte library.
+Frame is now a compiled **Rust desktop application**. It uses **egui/eframe** for a native GPU-rendered interface and **FFmpeg** for decoding, filtering, audio mixing, and export. There is no Electron, browser engine, JavaScript, npm, Node.js, Python service, HTTP server, or web build step in the application.
 
-## Run the desktop app
+The previous Electron implementation is preserved in Git history at `2a3d1b4`. The current source replaces it rather than wrapping it.
 
-Requirements: **Node.js 22.12+**, **Python 3.12+**, and **FFmpeg 7+** with `ffmpeg` and `ffprobe` on PATH. FFmpeg must include libx264, AAC, and the standard video filters. A normal graphical desktop session is required.
+## Build and run
 
-```sh
-npm ci
-python -m pip install -r backend/requirements.txt
-npm run desktop
-```
-
-`npm run desktop` builds the interface, opens an application window, and starts its local engine automatically. No hosted website, account, cloud upload, or API key is needed. This repository currently runs from source; signed macOS/Windows installers and bundled Python/FFmpeg runtimes are not provided. The desktop smoke test has been run on Linux; Windows and macOS remain unverified.
-
-If Python is not available as `python3` on macOS/Linux or `python` on Windows, set `FRAME_PYTHON` to its executable path. A virtual environment can be used:
+Install [Rust](https://rustup.rs/), a system C linker, and FFmpeg 7 or later. `rust-toolchain.toml` pins the compiler; Cargo downloads verified dependency versions from `Cargo.lock`.
 
 ```sh
-python -m venv .venv
-# macOS/Linux:
-. .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -r backend/requirements.txt
-# macOS/Linux:
-FRAME_PYTHON="$PWD/.venv/bin/python" npm run desktop
+cargo run --locked --release
 ```
 
-On Linux, Electron requires the distribution's normal sandbox/user-namespace support and GUI libraries. Do not disable the sandbox for everyday use. The automated container smoke test uses Chromium's headless platform and disables its sandbox inside the already isolated test container.
-
-## Edit a project
-
-The application starts with an original illustrated rocket demo. These images are sample artwork, not camera footage.
-
-- **Import media:** use the native file picker. Frame links to originals in place; it does not copy them into the project. Thumbnails and low-resolution video/audio preview files are generated on disk. Files become editable once probing and thumbnail generation finish; unfamiliar video codecs may need their preview conversion to finish before playback works.
-- **Arrange:** add a media item with its `+` button, or drag it onto a track. Drag clips to move and their left/right edges to trim. Track assignment is also available in Properties. The five tracks support layered footage, titles, graphics, voiceover, and music.
-- **Cut precisely:** place the playhead and press `S`. Arrow keys step one frame; Shift + arrows step ten. Remove Frames deletes a time range across tracks and closes the gap. Undo/redo covers timeline and property edits.
-- **Retime:** select video or audio and use Properties → Timing. Enter any positive speed multiplier that results in at least one output frame and no more than 24 hours, or enter the desired output duration in seconds. **Four hours → 20 seconds = 720×.** Changing speed preserves the selected source range and rescales its keyframe times.
-- **Make a clean timelapse:** select a video, open Color, and choose an 8×, 32×, or 720× Clean Timelapse preset. Presets enable source-frame motion blending, exposure flicker reduction, and mute source audio. You can change these independently, adjust blending strength, and restore source volume in Audio. A preset is unavailable if the source is too short to produce a full output frame.
-- **Explain:** add titles, subtitles, arrows, ellipses, focus rectangles, and lower thirds. Edit their text, color, size, position, scale, rotation, opacity, and track. Add transform keyframes, move the playhead, then change a transform to animate. Interpolation is linear.
-- **Finish:** choose exposure/brightness, contrast, saturation, warmth, blur, an ellipse/rectangle mask, or fade, slide, zoom, and wipe entrance effects. Fade also fades the clip's end and audio. Layer overlapping clips for a reveal of the footage below.
-- **Export:** render H.264/AAC MP4 from originals at 360p, 720p, 1080p, 4K, square, or vertical resolution. Export progress and cancellation are supported. Changing export dimensions changes composition layout; set your project canvas before arranging titles.
-
-Space plays/pauses, Delete removes the selected clip, Ctrl/Cmd + Z undoes, Ctrl/Cmd + Shift + Z redoes, and Ctrl/Cmd + S saves. The Help button lists shortcuts.
-
-## Clean Timelapse, honestly
-
-Simple frame dropping often makes a sped-up workbench clip look nervous. Frame's export pipeline scales decoded frames to the export canvas, optionally reduces brightness flicker, averages frames across an adjustable source-time exposure window, and then retimes the result. It keeps at most **16 sampled temporal frames per active video layer**; very high speeds spread those samples over the exposure window rather than retaining hundreds of full-resolution frames.
-
-This is an exposure-style approximation, not optical flow or a simulation of every missing frame. It can produce ghosting with fast objects or camera motion. It cannot repair a shaky camera or guarantee a cinematic result from poor footage. Use a locked camera and consistent lighting; choose lower blending strength when fine moving parts look smeared. Render a short test before a long export.
-
-Motion blending and flicker reduction are **export effects**, not real-time preview effects. Browser preview approximates FFmpeg color and typography. Extreme retiming uses seeking in preview; audio is pitch-preserved in export, but preview playback follows browser media playback behavior. Optical-flow slow motion and speed ramps are not implemented.
-
-## Large footage and resource use
-
-Original file byte size is not loaded into JavaScript memory. Native imports are references to file paths, and preview playback uses ranged HTTP file reads over the local loopback interface. Preview video is at most 960×540. Active media elements are created on demand; deleted clips release their elements. A paused preview redraws only when its state or media changes. There is one media preparation worker and one export worker, with bounded FFmpeg decoder/filter threads.
-
-Long exports render in timeline windows of at most 30 seconds, shrinking dense windows to avoid opening all project sources simultaneously. Identically encoded windows are concatenated without a second video encode. Keyframes and transition clocks retain their original clip timing across window boundaries. Temporary chunk videos are deleted after successful assembly. Very dense compositions are limited to 24 intersecting clip inputs per render window; flatten complex compositions before export.
-
-These choices make large originals practical **in principle**, but are not proof of smooth hundred-gigabyte projects. Proxy generation must decode the source, can take significant time, and consumes disk. High-resolution compositing, temporal blending, and multiple simultaneous layers still use substantial memory/CPU. Export is CPU-based; GPU decode/encode acceleration and hardware-specific performance tuning are not implemented. The current cloud machine has approximately 30 GB of free storage and is unsuitable for storing hundreds of gigabytes itself.
-
-Keep large originals on a fast local SSD or attached media volume. Use `FRAME_DATA_DIR` to put the preview cache, project database, and renders on a sufficiently large drive. Original files must remain available at their linked paths; reconnect a disconnected drive or use **Relink original** on the media item. Project JSON files do not embed footage. Relink a compatible source; edits beyond its duration are rejected during export. Cache cleanup is currently manual while the application is closed; do not remove `media/*/meta.json` or originals. Completed exports and snapshots are retained until you remove them.
-
-Current project limits are 2,000 clips, 200 transform keyframes per clip, five tracks, up to 3840×3840 pixels and 60 fps, and a 24-hour timeline. Speed has no preset-based multiplier cap; source availability and output frame duration remain the practical limits.
-
-## Saving and recovery
-
-The desktop app stores its library under Electron's per-user application data directory (`frame-studio/media-library`); `FRAME_DATA_DIR` overrides that location. The web development mode defaults to `.frame-data/` in this checkout. The two are intentionally separate libraries.
-
-Project changes auto-save after a short debounce. Writes use a temporary file, flush/fsync, and atomic replacement. A previous-save copy is retained and used if the current JSON is unreadable. The desktop app flushes pending project edits before quitting and offers to stay open if saving fails. A single-instance lock prevents two app windows from writing the same desktop project.
-
-Before New Project, Open Project, or Load Demo replaces your work, Frame saves an immutable project snapshot. You can also save a snapshot explicitly and restore snapshots from the project menu. **Download project backup** creates a portable `.frame.json` file. It contains references and edits, not media; cross-machine media-library migration is not implemented.
-
-Original media is never overwritten by Frame's processors. Failed decoding is reported per media item. Export states persist on disk; an app restart marks unfinished exports as interrupted. Running child processes are tracked and terminated on app shutdown. Proxy work interrupted by shutdown is retried at startup. Restarted exports must be started again; partial export resumption is not implemented.
-
-The local engine binds only to loopback. Native linking/relinking requires a per-launch random token held in the desktop main process, and only paths selected through the native file picker or obtained from genuine OS-dropped files reach it. The renderer has Node integration disabled, context isolation, a sandbox, navigation restrictions, and a content security policy. This is a single-user local application, not a multi-user server; do not expose the engine to a network.
-
-## Development and verification
-
-For interface development only, start the engine and Vite in two terminals:
+Or build once and launch the executable directly:
 
 ```sh
-npm run server
-npm run dev
+cargo build --locked --release
+# Linux:
+./target/release/frame
+# Windows PowerShell:
+.\target\release\frame.exe
 ```
 
-The native desktop workflow is the primary application. Development's file-upload fallback copies files to the cache and is intended for small test fixtures; use native linking for large footage.
+On Windows, the standard Rust MSVC toolchain needs Visual Studio C++ Build Tools with the Windows SDK. On Linux this build uses X11 and OpenGL; a working X11 session and the normal system X11/GL libraries are required. Wayland users need XWayland. A Windows build is a normal `.exe`; users of the compiled application do not need Rust or any package manager.
+
+Place `ffmpeg` and `ffprobe` beside the application executable or install them on PATH. Add `ffplay` for native audio preview. FFplay is optional for video preview and export; exported audio is mixed by FFmpeg regardless. Custom binary locations can be set with `FRAME_FFMPEG`, `FRAME_FFPROBE`, and `FRAME_FFPLAY`.
+
+The UI draws through the GPU. Video effects, proxy generation, and export currently use CPU-based FFmpeg processing. Rust removes the browser runtime and scripting-language coordination layers, but it does not make codecs, disk I/O, or every effect arbitrarily fast. GPU decoding/encoding and hundred-gigabyte project benchmarks are still future work.
+
+## Windows application and packaging
+
+Building on Windows produces `target/release/frame.exe`. For a portable app folder and ZIP:
+
+```powershell
+.\scripts\package-windows.ps1
+```
+
+That package expects FFmpeg on PATH. To bundle your Windows media binaries, supply their directory and the license/corresponding-source materials for that FFmpeg build:
+
+```powershell
+.\scripts\package-windows.ps1 `
+  -FfmpegDir C:\Tools\ffmpeg\bin `
+  -FfmpegLicenseDir C:\Tools\ffmpeg\distribution-materials
+```
+
+The script runs native editing tests, compiles a release build, copies `Frame.exe` and optional companion binaries, writes SHA-256 hashes, and creates a portable ZIP. Existing package folders and archives are preserved. This is portable application packaging; code-signed installers and automatic updates are not implemented.
+
+`.github/workflows/windows.yml` also builds a Windows executable and uploads it as a workflow artifact. It does not publish a release or bundle FFmpeg automatically. A successful cross-compilation/type check does not establish that the UI and media tools have run on Windows; Windows runtime testing remains necessary.
+
+## Editing workflow
+
+The app opens an original illustrated rocket project so its controls can be tried immediately. Demo images are sample artwork rather than camera footage.
+
+- **Import:** select files with the native file picker or drop original files into the window. Frame links to their filesystem paths and leaves originals in place. Probing and preview generation run on background workers. Multiple files can be probed while the proxy worker prepares an earlier file.
+- **Arrange:** add a library item with `+`, double-click it, or drag it to a timeline track. Drag clips to move; drag their edges to trim. Properties also provides timing and track assignment. Footage, B-roll, titles/graphics, voiceover, and music have five editable tracks.
+- **Cut:** `S` splits at the playhead. Arrow keys step one project frame; Shift + arrows step ten. Remove Frames deletes a selected time interval across tracks and closes the gap. Undo and redo cover editing and property changes.
+- **Retime:** use Properties → Timing to enter a positive speed multiplier or target duration. **Four hours into 20 seconds is 720×.** Speed changes preserve the selected source range and rescale animation times. Practical limits are at least one output frame and a 24-hour timeline, rather than a small preset multiplier cap.
+- **Explain:** add text, subtitles, technical labels, arrows, ellipses, focus rectangles, and lower thirds. Set text/color/size and animate position, scale, rotation, and opacity with linear keyframes.
+- **Finish:** adjust brightness, contrast, saturation, temperature, blur, ellipse/rectangle masks, and fade/slide/zoom/wipe entrances. Fade also affects the clip's ending and audio. Overlap layers to reveal footage beneath an animated clip.
+- **Export:** choose a resolution, select a new `.mp4` filename, and render H.264/AAC from original media. Progress and cancellation are available. Existing output files are rejected to protect previous renders.
+
+Space plays/pauses, Delete removes a selected clip, Ctrl/Cmd + Z undoes, Ctrl/Cmd + Shift + Z redoes, and Ctrl/Cmd + S saves. Project settings support horizontal, vertical/Shorts, and square canvases, up to 4K and 60 fps.
+
+## Clean Timelapse
+
+Select a video, open **Color**, and choose **8×**, **32×**, or **720×** in Clean Timelapse. Presets enable motion blending and exposure flicker reduction, and mute source audio. All three settings can be changed independently. The blending strength controls the sampled source-time exposure window.
+
+Export blends neighboring source samples **before retiming**, rather than simply blurring the already sped-up result. At most 16 sampled frames are retained per active temporal layer. High speeds spread those samples across the exposure window to avoid retaining hundreds of full-resolution source frames. Flicker reduction uses nearby frames to smooth brightness changes.
+
+This is exposure-style blending, not optical flow. Fast movement can ghost; low source frame rates, camera shake, or poor lighting cannot be repaired automatically. Use a fixed camera and consistent lighting, lower the strength if moving details smear, and render a short test first. Very slow playback repeats/interpolates existing presentation timestamps; optical-flow generation of new motion detail is not implemented.
+
+Temporal blending and deflicker are export effects. Native preview uses the same FFmpeg composition pipeline for the other implemented transforms, masks, titles, and color controls, with low-resolution media and no temporal processing. Audio playback uses a companion FFplay process and needs an available audio device. Preview restarts after seeks and at short bounded window boundaries; frame-perfect uninterrupted A/V playback is not yet guaranteed.
+
+## Storage, responsiveness, and recovery
+
+The original file size is not read into Rust UI memory. Project objects contain metadata and paths. UI previews use a two-frame bounded channel at a 640-pixel canvas width, with stale-generation frames discarded after a seek. Video proxies are at most 960×540. The media browser virtualizes visible rows and limits its thumbnail texture cache to 64 entries. Codec work, export, and media probing run outside the UI thread.
+
+There is one probing worker, one proxy worker, and one export at a time. FFmpeg decoder/filter/encoder parallelism is bounded. Long exports render timeline windows of at most 30 seconds; dense windows shrink to avoid opening every project source at once. No more than 24 intersecting clip inputs are admitted per render window. Completed chunks are joined without a second video encode. Temporary chunks are removed after a successful export.
+
+These choices keep RAM use separate from total original-file bytes. They do **not** establish smooth performance for hundreds of gigabytes of high-bitrate camera footage. Proxy generation still decodes the source. Simultaneous 4K layers and temporal effects remain expensive. Use sufficiently large, fast storage; allow room for proxies and roughly three times the compressed export size while the final file is assembled and copied. Completed jobs are retained until manually cleaned while Frame is closed.
+
+The library, projects, snapshots, and jobs live in the platform's per-user local data directory. Set `FRAME_DATA_DIR` to an absolute path on another drive to choose a different media cache. A filesystem lock prevents two app instances from editing the same library. Original files must remain available for export; cached proxies can be used for preview while an original is offline. Reconnect a disconnected drive or relink the original. The application currently limits projects to 2,000 clips and 200 transform keyframes per clip.
+
+Project JSON is saved with create-new temporary files, a data flush, and atomic replacement. A previous valid save is retained for recovery. A project snapshot is saved before creating/opening/loading a different project; snapshots can also be saved/restored from the project menu. Pending edits are saved when closing. If a close-time save fails, the app stays open so a backup can be made. Use **Download project backup** to create a `.frame.json` file. It stores edits and media IDs, not footage.
+
+Subprocesses have explicit ownership and are killed/reaped on cancellation and shutdown. An interrupted proxy job is retried when the library reopens. Job state and diagnostic FFmpeg logs live in `jobs/<id>/`; interrupted exports must be started again. Partial-export resumption, automatic cache eviction, and full multi-project media migration are not implemented.
+
+The v1 `.frame.json` project format and existing media metadata are readable by the Rust version. To reuse this checkout's earlier library, set `FRAME_DATA_DIR` to the existing absolute `.frame-data` path. No automatic move or deletion of original footage occurs. Project backups opened against a different library still need their missing original IDs relinked.
+
+## Validation
 
 ```sh
-python -m pip install -r backend/requirements-dev.txt
-npm test                 # pure timeline/animation regression tests
-npm run test:backend     # isolated real FFmpeg + API integration tests
-npm run build
-npm run test:e2e         # native Electron integration test; needs a GUI
-npm run format:check
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --locked --all-targets -- --test-threads=2
+cargo build --locked --release
 ```
 
-In a Linux CI container without a display:
+The tests include:
+
+- Headless native UI drawing, keyboard splitting/undo, snapshots, and saving pending edits at shutdown.
+- Pure Rust retiming, source offsets, animation-preserving split/ripple edits, malformed project validation, atomic recovery, and library locking.
+- Real FFmpeg probing, disk-linked originals and decodable proxies, composited audio/video, masks, keyframes, all implemented transitions, motion-blended pixel differences, slow motion, cancellation, missing sources, output preservation, streamed native preview frames, and non-silent preview PCM audio.
+- A real four-hour sparse-frame file rendered to 20 seconds at 720×. This validates long timestamps and output duration, **not** high-bitrate four-hour performance.
+
+Inspect tools without opening a window:
 
 ```sh
-FRAME_TEST_HEADLESS=1 npm run test:e2e
+./target/release/frame --check-tools
 ```
 
-`tests/browser.mjs` launches the actual Electron app and local Python engine, exercises native IPC/file linking (stubbing only the OS picker), checks the rendered canvas, edits the timeline, retimes footage, applies a clean timelapse preset, edits titles, reloads saved work, and renders/downloads an MP4. Tests use temporary libraries and do not modify your projects. Backend tests cover malformed media, range reads, access restrictions, project recovery, snapshots, compositing, every implemented transition, keyframes, masks, motion-blended pixel differences, slow motion, long-timestamp 720× retiming, export cancellation, and content across render-window boundaries. The four-hour fixture uses sparse frames to test real long timestamps; it is not a four-hour high-bitrate footage performance benchmark.
+Render a saved project against the selected media library:
 
-Electron installation in a proxied environment may require Node's `NODE_USE_ENV_PROXY=1`. To put its verified binary download cache in a writable location, set `XDG_CACHE_HOME` or `electron_config_cache`. Do not skip checksum verification. If lazy installation needs to be retried, run `node node_modules/electron/install.js` with the same proxy/cache environment.
+```sh
+./target/release/frame --render project.frame.json new-output.mp4
+```
 
-## Not yet implemented
+For a native-window smoke test in a graphical session:
 
-This release has a real editing/export workflow, but does not have professional-editor feature parity. Not implemented: optical flow, motion tracking, stabilization, arbitrary Bezier/rotoscoping masks, multicam, nested sequences, variable speed ramps, GPU effects, RAW/log/HDR color management, LUT import, scopes, chroma key, audio waveforms/EQ/noise reduction, captions/transcription, plugins, collaborative projects, automatic media migration, native installers, or an MCP server. Input support depends on the installed FFmpeg build; camera RAW, DRM-protected material, and every codec/container combination are not guaranteed. Output is currently MP4/H.264/AAC only.
+```sh
+./target/release/frame --ui-smoke screenshot.png
+```
 
-## Code layout
+This launches the actual OpenGL native window, requests a framebuffer screenshot after four seconds, and closes. In Linux CI, run it under an X11 virtual display. Unit UI tests need no browser or graphical server. Real media tests need FFmpeg/FFprobe.
 
-- `desktop/`: application lifecycle, native picker IPC, engine startup/shutdown.
-- `frontend/src/editor.js`: pure edit operations and animation evaluation.
-- `frontend/src/Preview.jsx`: on-demand media playback and canvas compositing.
-- `frontend/src/main.jsx`: workspace, timeline, inspector, project and export interactions.
-- `backend/app.py`: validated local API, disk-backed library, snapshots, background jobs.
-- `backend/render.py`: original-media FFmpeg composition and bounded render windows.
-- `backend/runtime.py`: subprocess ownership, cancellation, shutdown.
-- `backend/models.py`: validated project/clip format.
-- `tests/`: timeline, FFmpeg/API, and native application regression coverage.
+## Current limits
 
-Demo artwork is generated locally in `backend/demo.py`. DejaVu Sans is bundled with its license under `assets/fonts/` for offline, consistent title rendering.
+Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, motion tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, plugins, collaboration, an MCP server, hardware video acceleration, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
+
+## Source layout
+
+- `src/ui.rs`: native workspace, inspector, timeline, dialogs, asynchronous job coordination.
+- `src/model.rs`, `src/edit.rs`: validated project format and pure edit operations.
+- `src/media.rs`: disk-linked media probing, thumbnail/proxy preparation, embedded demo assets.
+- `src/preview.rs`: cancellable bounded native frame streaming and optional audio output.
+- `src/render.rs`: FFmpeg graphs, keyframes, generated graphics, temporal effects, chunked export.
+- `src/process.rs`: tool discovery, subprocess groups, cancellation, bounded diagnostic capture.
+- `src/storage.rs`: atomic saves, recovery copies, snapshots, exclusive library lock.
+- `tests/editing.rs`, `tests/native.rs`: pure editing and actual media regression tests.
+- `scripts/package-windows.ps1`: portable Windows app packaging.
+
+Original demo artwork and DejaVu Sans are embedded in the executable. The font's license is under `assets/fonts/`.

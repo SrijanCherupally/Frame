@@ -1,0 +1,33 @@
+name: Native Windows executable
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'tests/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'tests/**', '.github/workflows/windows.yml']
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        shell: pwsh
+        run: rustup show
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Test native editing and recovery
+        run: cargo test --locked --lib --test editing
+      - name: Build native application
+        run: cargo build --locked --release
+      - name: Upload executable (FFmpeg installed separately)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Frame-Windows-x64
+          path: |
+            target/release/frame.exe
+            README.md
+            THIRD-PARTY-LICENSES.txt
+            assets/fonts/LICENSE-DejaVu.txt

@@ -1,0 +1,2966 @@
+use crate::{
+    edit::{self, History},
+    media::{self, Asset},
+    model::*,
+    preview::{Preview, PreviewEvent},
+    process::ProcessGroup,
+    render::{self, Job},
+    storage::{Storage, atomic_json, load_project},
+};
+
+use crossbeam_channel::{Receiver, Sender, unbounded};
+
+use eframe::egui::{
+    self, Color32, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, Vec2,
+};
+
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::Arc,
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
+
+const GREEN: Color32 = Color32::from_rgb(198, 233, 157);
+
+const MUTED: Color32 = Color32::from_rgb(130, 141, 145);
+
+const PANEL: Color32 = Color32::from_rgb(23, 26, 29);
+
+const TRACK_COLORS: [Color32; 5] = [
+    Color32::from_rgb(175, 145, 204),
+    Color32::from_rgb(122, 178, 155),
+    Color32::from_rgb(111, 158, 191),
+    Color32::from_rgb(211, 163, 113),
+    Color32::from_rgb(159, 145, 194),
+];
+
+enum Event {
+    Asset(Asset),
+    Files(Vec<PathBuf>),
+    Message(String),
+    Job(Job),
+    Project(Project),
+}
+
+struct Import {
+    path: PathBuf,
+    id: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Tab {
+    Media,
+    Audio,
+    Text,
+    Graphics,
+    Transitions,
+    Effects,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum PropertyTab {
+    Properties,
+    Audio,
+    Color,
+}
+
+struct Drag {
+    clip: Clip,
+    pointer: f32,
+    edge: i8,
+}
+
+pub struct FrameApp {
+    pub project: Project,
+    pub assets: Arc<HashMap<String, Asset>>,
+    storage: Storage,
+    history: History,
+    selected: Option<String>,
+    tab: Tab,
+    property_tab: PropertyTab,
+    time: f64,
+    playing: bool,
+    preview: Preview,
+    preview_texture: Option<TextureHandle>,
+    preview_dirty: Option<Instant>,
+    preview_running: bool,
+    events: Receiver<Event>,
+    send: Sender<Event>,
+    imports: Option<Sender<Import>>,
+    import_group: ProcessGroup,
+    import_threads: Vec<JoinHandle<()>>,
+    exports: Option<(ProcessGroup, JoinHandle<()>)>,
+    pub job: Option<Job>,
+    thumb_cache: HashMap<String, TextureHandle>,
+    search: String,
+    zoom: f32,
+    snap: bool,
+    drag: Option<Drag>,
+    dirty: Option<Instant>,
+    last_error: String,
+    notice: Option<(String, Instant)>,
+    saved: String,
+    export_window: bool,
+    settings_window: bool,
+    help_window: bool,
+    range_window: bool,
+    snapshots_window: bool,
+    range: [f64; 2],
+    export_size: [u32; 2],
+    property_drag: bool,
+    quit_error: bool,
+}
+
+impl FrameApp {
+    pub fn new(storage: Storage) -> anyhow::Result<Self> {
+        media::seed(&storage.root)?;
+
+        let mut assets = storage.assets();
+
+        let project = storage.load()?.unwrap_or_else(demo_project);
+
+        let selected = project.clips.first().map(|c| c.id.clone());
+
+        let (tx, rx) = unbounded();
+
+        let (import_tx, import_rx) = unbounded::<Import>();
+
+        let (proxy_tx, proxy_rx) = unbounded::<Asset>();
+
+        let group = ProcessGroup::default();
+
+        let root = storage.root.clone();
+
+        let tx2 = tx.clone();
+
+        let group2 = group.clone();
+
+        let probe_thread = thread::spawn(move || {
+            while let Ok(task) = import_rx.recv() {
+                if group2.cancelled() {
+                    break;
+                }
+
+                match media::probe(&task.path, &group2) {
+                    Ok(mut a) => {
+                        if let Some(id) = task.id {
+                            a.id = id;
+                        }
+
+                        let dir = root.join("media").join(&a.id);
+
+                        let result = std::fs::create_dir_all(&dir).and_then(|_| {
+                            atomic_json(&dir.join("meta.json"), &a).map_err(std::io::Error::other)
+                        });
+
+                        if let Err(e) = result {
+                            let _ = tx2.send(Event::Message(format!(
+                                "Could not save imported media: {e}"
+                            )));
+
+                            continue;
+                        }
+
+                        let _ = tx2.send(Event::Asset(a.clone()));
+
+                        let _ = proxy_tx.send(a);
+                    }
+
+                    Err(e) => {
+                        let _ = tx2.send(Event::Message(format!(
+                            "Could not import {}: {e}",
+                            task.path.file_name().unwrap_or_default().to_string_lossy()
+                        )));
+                    }
+                }
+            }
+        });
+
+        let root = storage.root.clone();
+
+        let tx2 = tx.clone();
+
+        let group2 = group.clone();
+
+        let proxy_thread = thread::spawn(move || {
+            while let Ok(a) = proxy_rx.recv() {
+                if group2.cancelled() {
+                    break;
+                }
+
+                let mut failed = a.clone();
+
+                match media::prepare(a, &root, &group2, |a| {
+                    let _ = tx2.send(Event::Asset(a));
+                }) {
+                    Ok(a) => {
+                        let _ = tx2.send(Event::Asset(a));
+                    }
+
+                    Err(e) => {
+                        if !group2.cancelled() {
+                            failed.status = "error".into();
+
+                            failed.error = Some(e.to_string());
+
+                            let _ = atomic_json(
+                                &root.join("media").join(&failed.id).join("meta.json"),
+                                &failed,
+                            );
+
+                            let _ = tx2.send(Event::Asset(failed));
+                        }
+                    }
+                }
+            }
+        });
+
+        for a in assets.values_mut() {
+            if matches!(a.status.as_str(), "processing" | "proxying") {
+                a.status = "processing".into();
+
+                let _ = import_tx.send(Import {
+                    path: a.path.clone(),
+                    id: Some(a.id.clone()),
+                });
+            }
+        }
+
+        Ok(Self {
+            project,
+            assets: Arc::new(assets),
+            storage,
+            history: History::default(),
+            selected,
+            tab: Tab::Media,
+            property_tab: PropertyTab::Properties,
+            time: 2.5,
+            playing: false,
+            preview: Preview::default(),
+            preview_texture: None,
+            preview_dirty: Some(Instant::now() - Duration::from_secs(1)),
+            preview_running: false,
+            events: rx,
+            send: tx,
+            imports: Some(import_tx),
+            import_group: group,
+            import_threads: vec![probe_thread, proxy_thread],
+            exports: None,
+            job: None,
+            thumb_cache: HashMap::new(),
+            search: String::new(),
+            zoom: 32.,
+            snap: true,
+            drag: None,
+            dirty: None,
+            last_error: String::new(),
+            notice: None,
+            saved: "All changes saved".into(),
+            export_window: false,
+            settings_window: false,
+            help_window: false,
+            range_window: false,
+            snapshots_window: false,
+            range: [0., 1. / 30.],
+            export_size: [1920, 1080],
+            property_drag: false,
+            quit_error: false,
+        })
+    }
+
+    pub fn configure(ctx: &egui::Context) {
+        let mut style = (*ctx.style()).clone();
+
+        style.visuals = egui::Visuals::dark();
+
+        style.visuals.panel_fill = PANEL;
+
+        style.visuals.window_fill = Color32::from_rgb(27, 31, 33);
+
+        style.visuals.extreme_bg_color = Color32::from_rgb(16, 19, 21);
+
+        style.visuals.faint_bg_color = Color32::from_rgb(32, 37, 38);
+
+        style.visuals.selection.bg_fill = Color32::from_rgb(64, 83, 48);
+
+        style.visuals.selection.stroke = Stroke::new(1.0_f32, GREEN);
+
+        style.visuals.widgets.active.bg_fill = Color32::from_rgb(71, 91, 55);
+
+        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(52, 62, 51);
+
+        style.spacing.item_spacing = Vec2::new(9., 9.);
+
+        style.spacing.button_padding = Vec2::new(10., 6.);
+
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::proportional(13.));
+
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::proportional(12.));
+
+        style
+            .text_styles
+            .insert(egui::TextStyle::Small, egui::FontId::proportional(10.));
+
+        ctx.set_style(style);
+
+        let mut fonts = egui::FontDefinitions::default();
+
+        fonts.font_data.insert(
+            "frame".into(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/DejaVuSans.ttf")).into(),
+        );
+
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "frame".into());
+
+        ctx.set_fonts(fonts);
+    }
+
+    fn notify(&mut self, text: impl Into<String>) {
+        self.notice = Some((text.into(), Instant::now()));
+    }
+
+    fn modified(&mut self) {
+        self.dirty = Some(Instant::now());
+
+        self.saved = "Saving…".into();
+
+        self.preview_dirty = Some(Instant::now());
+
+        if self.playing {
+            self.playing = false;
+
+            self.preview.stop();
+
+            self.preview_running = false;
+        }
+    }
+
+    fn save(&mut self) -> bool {
+        match self.storage.save(&self.project) {
+            Ok(()) => {
+                self.saved = "All changes saved".into();
+
+                self.dirty = None;
+
+                true
+            }
+
+            Err(e) => {
+                self.saved = "Save failed — download a backup".into();
+
+                self.last_error = e.to_string();
+
+                false
+            }
+        }
+    }
+
+    fn select(&mut self, id: String) {
+        self.selected = Some(id);
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        self.selected
+            .as_ref()
+            .and_then(|id| self.project.clips.iter().position(|c| &c.id == id))
+    }
+
+    fn import_picker(&self, relink: Option<String>) {
+        let tx = self.send.clone();
+
+        let imports = self.imports.as_ref().unwrap().clone();
+
+        thread::spawn(move || {
+            let picker = rfd::FileDialog::new().add_filter(
+                "Video, audio and images",
+                &[
+                    "mp4", "mov", "mkv", "webm", "avi", "mxf", "mts", "mp3", "wav", "aac", "m4a",
+                    "flac", "aiff", "ogg", "opus", "png", "jpg", "jpeg", "webp",
+                ],
+            );
+
+            if let Some(id) = relink {
+                if let Some(path) = picker.pick_file() {
+                    let _ = imports.send(Import { path, id: Some(id) });
+                }
+            } else if let Some(files) = picker.pick_files() {
+                let _ = tx.send(Event::Files(files));
+            }
+        });
+    }
+
+    fn add_asset(&mut self, id: &str, at: Option<f64>, track: Option<usize>) {
+        let Some(a) = self.assets.get(id) else {
+            return;
+        };
+
+        if !a.ready() {
+            self.notify(
+                a.error
+                    .clone()
+                    .unwrap_or_else(|| "Media is still preparing its preview".into()),
+            );
+
+            return;
+        }
+
+        let kind = a.kind;
+
+        let track = track.unwrap_or(if kind == Kind::Audio { 4 } else { 1 });
+
+        if track >= 3 && !a.has_audio {
+            self.notify("This file has no audio stream for an audio track");
+
+            return;
+        }
+
+        let kind = if track >= 3 { Kind::Audio } else { kind };
+
+        let start = at.unwrap_or_else(|| {
+            self.project
+                .clips
+                .iter()
+                .filter(|c| c.track == track)
+                .map(Clip::end)
+                .fold(0., f64::max)
+        });
+
+        let c = Clip {
+            asset_id: Some(id.into()),
+            kind,
+            name: a.name.clone(),
+            start,
+            track,
+            duration: if kind == Kind::Image { 5. } else { a.duration },
+            ..Clip::default()
+        };
+
+        self.history.remember(&self.project);
+
+        self.selected = Some(c.id.clone());
+
+        self.project.clips.push(c);
+
+        self.time = start;
+
+        self.modified();
+    }
+
+    fn add_layer(&mut self, kind: Kind, graphic: Graphic, text: &str, size: u32) {
+        let c = Clip {
+            kind,
+            graphic,
+            text: text.into(),
+            name: text.lines().next().unwrap_or("Graphic").into(),
+            font_size: size,
+            track: 0,
+            start: self.time,
+            transition: Transition::Fade,
+            ..Clip::default()
+        };
+
+        self.history.remember(&self.project);
+
+        self.selected = Some(c.id.clone());
+
+        self.project.clips.push(c);
+
+        self.property_tab = PropertyTab::Properties;
+
+        self.modified();
+    }
+
+    fn split(&mut self) {
+        let Some(id) = self.selected.clone() else {
+            return;
+        };
+
+        let mut p = self.project.clone();
+
+        if edit::split(&mut p, &id, self.time) {
+            self.history.remember(&self.project);
+
+            self.project = p;
+
+            self.modified();
+        } else {
+            self.notify("Place the playhead inside the selected clip to split");
+        }
+    }
+
+    fn delete(&mut self) {
+        if let Some(id) = self.selected.take() {
+            self.history.remember(&self.project);
+
+            self.project.clips.retain(|c| c.id != id);
+
+            self.modified();
+        }
+    }
+
+    fn duplicate(&mut self) {
+        if let Some(i) = self.selected_index() {
+            let mut c = self.project.clips[i].clone();
+
+            c.id = uid();
+
+            c.start = c.end();
+
+            if c.end() > 86400. {
+                return;
+            }
+
+            self.history.remember(&self.project);
+
+            self.selected = Some(c.id.clone());
+
+            self.project.clips.push(c);
+
+            self.modified();
+        }
+    }
+
+    fn toggle_play(&mut self) {
+        if self.project.clips.is_empty() {
+            return;
+        }
+
+        self.playing = !self.playing;
+
+        if self.time >= self.project.duration() {
+            self.time = 0.;
+        }
+
+        self.preview_dirty = Some(Instant::now() - Duration::from_secs(1));
+
+        if !self.playing {
+            self.preview.stop();
+
+            self.preview_running = false;
+        }
+    }
+
+    fn seek(&mut self, time: f64) {
+        self.time = time.clamp(0., self.project.duration().max(0.));
+
+        self.playing = false;
+
+        self.preview.stop();
+
+        self.preview_running = false;
+
+        self.preview_dirty = Some(Instant::now());
+    }
+
+    fn switch(&mut self, p: Project) {
+        if let Err(e) = p
+            .validate()
+            .and_then(|_| self.storage.snapshot(&self.project).map(|_| ()))
+        {
+            self.notify(format!("Could not preserve project before switching: {e}"));
+
+            return;
+        }
+
+        self.history.remember(&self.project);
+
+        self.project = p;
+
+        self.selected = self.project.clips.first().map(|c| c.id.clone());
+
+        self.time = 0.;
+
+        self.modified();
+    }
+
+    fn open_project(&self) {
+        let tx = self.send.clone();
+
+        thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Frame project", &["json"])
+                .pick_file()
+            {
+                let event = match load_project(&path) {
+                    Ok(p) => Event::Project(p),
+                    Err(e) => Event::Message(e.to_string()),
+                };
+
+                let _ = tx.send(event);
+            }
+        });
+    }
+
+    fn backup(&self) {
+        let p = self.project.clone();
+
+        let tx = self.send.clone();
+
+        thread::spawn(move || {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("project.frame.json")
+                .save_file()
+            {
+                let event = match atomic_json(&path, &p) {
+                    Ok(()) => Event::Message(
+                        "Project backup saved. Originals remain linked on disk.".into(),
+                    ),
+                    Err(e) => Event::Message(e.to_string()),
+                };
+
+                let _ = tx.send(event);
+            }
+        });
+    }
+
+    fn export(&mut self) {
+        if self.exports.as_ref().is_some_and(|(_, h)| !h.is_finished()) {
+            self.notify("An export is already running");
+
+            return;
+        }
+
+        let mut project = self.project.clone();
+
+        project.width = self.export_size[0];
+
+        project.height = self.export_size[1];
+
+        if let Err(e) = project.validate() {
+            self.notify(e.to_string());
+
+            return;
+        }
+
+        if project.clips.is_empty() {
+            self.notify("Add clips before exporting");
+
+            return;
+        }
+
+        let assets = self.assets.clone();
+
+        let tx = self.send.clone();
+
+        let root = self.storage.root.clone();
+
+        let group = ProcessGroup::default();
+
+        let token = group.clone();
+
+        self.job = Some(Job {
+            id: uid(),
+            status: "Choosing destination".into(),
+            progress: 0.,
+            error: None,
+            output: None,
+        });
+
+        let handle = thread::spawn(move || {
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("MP4 video", &["mp4"])
+                .set_file_name("frame-export.mp4")
+                .save_file()
+            else {
+                let _ = tx.send(Event::Message(
+                    "Export destination selection cancelled".into(),
+                ));
+
+                return;
+            };
+
+            let mut job = Job {
+                id: uid(),
+                status: "Rendering".into(),
+                progress: 0.,
+                error: None,
+                output: Some(path.clone()),
+            };
+
+            let dir = root.join("jobs").join(&job.id);
+
+            let _ = std::fs::create_dir_all(&dir);
+
+            let _ = tx.send(Event::Job(job.clone()));
+
+            let mut last = Instant::now() - Duration::from_secs(1);
+
+            let mut state_error = None;
+
+            let result = render::export(&project, &assets, &dir, &path, &token, |v| {
+                if last.elapsed() > Duration::from_millis(300) || v >= 1. {
+                    job.progress = v;
+
+                    if let Err(e) = render::persist_job(&dir, &job) {
+                        state_error = Some(e.to_string());
+
+                        token.cancel();
+                    }
+
+                    let _ = tx.send(Event::Job(job.clone()));
+
+                    last = Instant::now();
+                }
+            });
+
+            match result {
+                Ok(()) => {
+                    job.status = "Complete".into();
+
+                    job.progress = 1.;
+                }
+
+                Err(e) => {
+                    job.status = if token.cancelled() {
+                        "Cancelled"
+                    } else {
+                        "Failed"
+                    }
+                    .into();
+
+                    job.error = Some(state_error.unwrap_or_else(|| e.to_string()));
+                }
+            }
+
+            let _ = render::persist_job(&dir, &job);
+
+            let _ = tx.send(Event::Job(job));
+        });
+
+        self.exports = Some((group, handle));
+    }
+
+    fn poll(&mut self, ctx: &egui::Context) {
+        while let Ok(event) = self.events.try_recv() {
+            match event {
+                Event::Asset(a) => {
+                    let id = a.id.clone();
+
+                    Arc::make_mut(&mut self.assets).insert(id.clone(), a);
+
+                    self.thumb_cache.remove(&id);
+
+                    if !self.playing {
+                        self.preview_dirty = Some(Instant::now());
+                    }
+                }
+
+                Event::Files(files) => {
+                    if files.len() + self.assets.len() > 2000 {
+                        self.notify("Library limit: 2,000 media items");
+                    } else {
+                        for path in files {
+                            if let Some(tx) = &self.imports {
+                                let _ = tx.send(Import { path, id: None });
+                            }
+                        }
+                    }
+                }
+
+                Event::Message(msg) => self.notify(msg),
+                Event::Job(job) => self.job = Some(job),
+                Event::Project(p) => self.switch(p),
+            }
+        }
+
+        while let Some(frame) = self.preview.next_event() {
+            match frame {
+                PreviewEvent::Frame {
+                    pixels,
+                    width,
+                    height,
+                    time,
+                } => {
+                    let image =
+                        egui::ColorImage::from_rgb([width as usize, height as usize], &pixels);
+
+                    if let Some(texture) = &mut self.preview_texture {
+                        texture.set(image, egui::TextureOptions::LINEAR);
+                    } else {
+                        self.preview_texture =
+                            Some(ctx.load_texture("preview", image, egui::TextureOptions::LINEAR));
+                    }
+
+                    if self.playing {
+                        self.time = time;
+                    }
+                }
+
+                PreviewEvent::Error(error) => {
+                    self.last_error = error;
+
+                    self.playing = false;
+
+                    self.preview_running = false;
+                }
+
+                PreviewEvent::Finished => {
+                    self.preview_running = false;
+
+                    if self.playing {
+                        let next = self.time + 1. / self.project.fps as f64;
+
+                        if next >= self.project.duration() - 0.02 {
+                            self.playing = false;
+
+                            self.time = self.project.duration();
+                        } else {
+                            self.time = next;
+
+                            self.preview_dirty = Some(Instant::now() - Duration::from_secs(1));
+                        }
+                    }
+                }
+            }
+        }
+
+        if self
+            .preview_dirty
+            .is_some_and(|t| t.elapsed() >= Duration::from_millis(90))
+        {
+            self.preview_dirty = None;
+
+            self.last_error.clear();
+
+            self.preview.start(
+                self.project.clone(),
+                self.assets.clone(),
+                self.time
+                    .min((self.project.duration() - 1. / self.project.fps as f64).max(0.)),
+                self.playing,
+                self.storage.root.clone(),
+                true,
+            );
+
+            self.preview_running = true;
+        }
+
+        if self
+            .dirty
+            .is_some_and(|t| t.elapsed() > Duration::from_millis(750))
+        {
+            self.save();
+        }
+
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, t)| t.elapsed() > Duration::from_secs(7))
+        {
+            self.notice = None;
+        }
+
+        let files = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect::<Vec<_>>()
+        });
+
+        if !files.is_empty() {
+            let _ = self.send.send(Event::Files(files));
+        }
+
+        if self.playing
+            || self.preview_running
+            || self.dirty.is_some()
+            || self
+                .assets
+                .values()
+                .any(|a| matches!(a.status.as_str(), "processing" | "proxying"))
+            || self.exports.as_ref().is_some_and(|(_, h)| !h.is_finished())
+        {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+
+    fn shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Space) {
+                self.toggle_play();
+            }
+
+            if i.key_pressed(egui::Key::S) && !i.modifiers.command {
+                self.split();
+            }
+
+            if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+                self.delete();
+            }
+
+            if i.key_pressed(egui::Key::ArrowRight) {
+                self.seek(
+                    self.time + if i.modifiers.shift { 10. } else { 1. } / self.project.fps as f64,
+                );
+            }
+
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                self.seek(
+                    self.time - if i.modifiers.shift { 10. } else { 1. } / self.project.fps as f64,
+                );
+            }
+
+            if i.modifiers.command && i.key_pressed(egui::Key::Z) {
+                if i.modifiers.shift {
+                    self.history.redo(&mut self.project);
+                } else {
+                    self.history.undo(&mut self.project);
+                }
+
+                self.modified();
+            }
+
+            if i.modifiers.command && i.key_pressed(egui::Key::S) {
+                self.save();
+            }
+        });
+    }
+
+    fn top(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("top")
+            .exact_height(58.)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(27., 26.), Sense::hover());
+
+                    for (i, width) in [24., 17., 7.].iter().enumerate() {
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(
+                                rect.min + Vec2::new(0., i as f32 * 9.),
+                                Vec2::new(*width, 6.),
+                            ),
+                            1.,
+                            GREEN,
+                        );
+                    }
+
+                    ui.label(RichText::new("frame").size(26.).strong());
+
+                    ui.label(RichText::new("NATIVE").size(9.).color(GREEN));
+
+                    ui.separator();
+
+                    ui.menu_button(self.project.name.clone(), |ui| {
+                        if ui.button("New project").clicked() {
+                            self.switch(Project::default());
+
+                            ui.close();
+                        }
+
+                        if ui.button("Open project…").clicked() {
+                            self.open_project();
+
+                            ui.close();
+                        }
+
+                        if ui.button("Download project backup…").clicked() {
+                            self.backup();
+
+                            ui.close();
+                        }
+
+                        if ui.button("Save snapshot").clicked() {
+                            let msg = match self.storage.snapshot(&self.project) {
+                                Ok(_) => "Project snapshot saved".into(),
+                                Err(e) => e.to_string(),
+                            };
+
+                            self.notify(msg);
+
+                            ui.close();
+                        }
+
+                        if ui.button("Restore snapshot…").clicked() {
+                            self.snapshots_window = true;
+
+                            ui.close();
+                        }
+
+                        if ui.button("Load rocket demo").clicked() {
+                            self.switch(demo_project());
+
+                            self.seek(2.5);
+
+                            ui.close();
+                        }
+                    });
+
+                    ui.label(RichText::new(&self.saved).small().color(MUTED));
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Export video  ↑").color(Color32::BLACK),
+                                )
+                                .fill(GREEN),
+                            )
+                            .clicked()
+                        {
+                            self.export_size = [self.project.width, self.project.height];
+
+                            self.export_window = true;
+                        }
+
+                        if ui.button("?").clicked() {
+                            self.help_window = true;
+                        }
+
+                        if ui.button("Settings").clicked() {
+                            self.settings_window = true;
+                        }
+                    });
+                });
+            });
+    }
+
+    fn library(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("rail")
+            .exact_width(72.)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.style_mut().spacing.button_padding.x = 3.;
+                ui.add_space(12.);
+
+                for (tab, icon, name) in [
+                    (Tab::Media, "▣", "Media"),
+                    (Tab::Audio, "♫", "Audio"),
+                    (Tab::Text, "T", "Text"),
+                    (Tab::Graphics, "◇", "Graphics"),
+                    (Tab::Transitions, "▱", "Transitions"),
+                    (Tab::Effects, "≋", "Effects"),
+                ] {
+                    let response = ui.add_sized(
+                        [58., 56.],
+                        egui::Button::new(
+                            RichText::new(format!("{icon}\n{name}"))
+                                .size(11.)
+                                .color(if self.tab == tab { GREEN } else { MUTED }),
+                        )
+                        .fill(if self.tab == tab {
+                            Color32::from_rgb(36, 45, 33)
+                        } else {
+                            PANEL
+                        }),
+                    );
+
+                    if response.clicked() {
+                        self.tab = tab;
+                    }
+                }
+            });
+
+        egui::SidePanel::left("library")
+            .default_width(250.)
+            .min_width(190.)
+            .max_width(370.)
+            .show(ctx, |ui| {
+                ui.add_space(15.);
+
+                ui.heading(match self.tab {
+                    Tab::Media => "Your media",
+                    Tab::Audio => "Audio library",
+                    Tab::Text => "Text & titles",
+                    Tab::Graphics => "Explanation graphics",
+                    Tab::Transitions => "Transitions",
+                    Tab::Effects => "Color & effects",
+                });
+
+                ui.add_space(13.);
+
+                if matches!(self.tab, Tab::Media | Tab::Audio) {
+                    if ui
+                        .add_sized(
+                            [ui.available_width(), 34.],
+                            egui::Button::new(
+                                RichText::new("+  Import media").color(Color32::BLACK),
+                            )
+                            .fill(GREEN),
+                        )
+                        .clicked()
+                    {
+                        self.import_picker(None);
+                    }
+
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.search).hint_text("Search your media"),
+                    );
+
+                    ui.add_space(12.);
+
+                    let mut assets: Vec<_> = self
+                        .assets
+                        .values()
+                        .filter(|a| {
+                            (self.tab != Tab::Audio || a.kind == Kind::Audio)
+                                && a.name.to_lowercase().contains(&self.search.to_lowercase())
+                        })
+                        .cloned()
+                        .collect();
+
+                    assets.sort_by(|a, b| a.name.cmp(&b.name));
+
+                    ui.label(
+                        RichText::new(format!("PROJECT MEDIA   /   {} files", assets.len()))
+                            .small()
+                            .color(MUTED),
+                    );
+
+                    ui.add_space(5.);
+
+                    let cols = 2;
+
+                    let rows = assets.len().div_ceil(cols);
+
+                    egui::ScrollArea::vertical()
+                        .id_salt("media_scroll")
+                        .show_rows(ui, 130., rows, |ui, range| {
+                            for row in range {
+                                ui.horizontal_top(|ui| {
+                                    let width = (ui.available_width() - 10.) / 2.;
+
+                                    for col in 0..cols {
+                                        if let Some(a) = assets.get(row * cols + col) {
+                                            ui.vertical(|ui| {
+                                                ui.set_width(width);
+
+                                                let (rect, response) = ui.allocate_exact_size(
+                                                    Vec2::new(width, 76.),
+                                                    Sense::click_and_drag(),
+                                                );
+
+                                                let texture = self.thumbnail(ctx, &a.id);
+
+                                                if let Some(texture) = texture {
+                                                    ui.painter().image(
+                                                        texture.id(),
+                                                        rect,
+                                                        Rect::from_min_max(
+                                                            Pos2::ZERO,
+                                                            Pos2::new(1., 1.),
+                                                        ),
+                                                        Color32::WHITE,
+                                                    );
+                                                } else {
+                                                    ui.painter().rect_filled(
+                                                        rect,
+                                                        5.,
+                                                        Color32::from_rgb(44, 51, 49),
+                                                    );
+
+                                                    ui.painter().text(
+                                                        rect.center(),
+                                                        egui::Align2::CENTER_CENTER,
+                                                        if a.kind == Kind::Audio {
+                                                            "♫"
+                                                        } else {
+                                                            "…"
+                                                        },
+                                                        egui::FontId::proportional(26.),
+                                                        GREEN,
+                                                    );
+                                                }
+
+                                                if response.double_clicked() {
+                                                    self.add_asset(&a.id, None, None);
+                                                }
+
+                                                if response.drag_started() {
+                                                    response.dnd_set_drag_payload(a.id.clone());
+                                                }
+
+                                                let add = Rect::from_min_size(
+                                                    rect.right_top() - Vec2::new(25., -4.),
+                                                    Vec2::splat(21.),
+                                                );
+
+                                                ui.painter().rect_filled(
+                                                    add,
+                                                    3.,
+                                                    Color32::from_rgb(49, 64, 42),
+                                                );
+
+                                                ui.painter().text(
+                                                    add.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "+",
+                                                    egui::FontId::proportional(14.),
+                                                    GREEN,
+                                                );
+
+                                                if ui
+                                                    .interact(
+                                                        add,
+                                                        ui.id().with((&a.id, "add")),
+                                                        Sense::click(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    self.add_asset(&a.id, None, None);
+                                                }
+
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        RichText::new(&a.name).size(10.),
+                                                    )
+                                                    .truncate(),
+                                                )
+                                                .on_hover_text(&a.name);
+
+                                                ui.label(
+                                                    RichText::new(if a.demo {
+                                                        "Sample illustration".into()
+                                                    } else if a.status == "ready" {
+                                                        format!(
+                                                            "{} · {}",
+                                                            if a.kind == Kind::Audio {
+                                                                "Audio"
+                                                            } else {
+                                                                "Linked original"
+                                                            },
+                                                            format_bytes(a.size)
+                                                        )
+                                                    } else {
+                                                        a.status.clone()
+                                                    })
+                                                    .size(9.)
+                                                    .color(if a.status == "error" {
+                                                        Color32::LIGHT_RED
+                                                    } else {
+                                                        MUTED
+                                                    }),
+                                                );
+
+                                                if a.error.is_some() {
+                                                    if ui
+                                                        .small_button("Retry / relink")
+                                                        .on_hover_text(
+                                                            a.error.as_deref().unwrap_or(""),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        self.import_picker(Some(a.id.clone()));
+                                                    }
+                                                } else if !a.demo
+                                                    && ui.small_button("Relink original").clicked()
+                                                {
+                                                    self.import_picker(Some(a.id.clone()));
+                                                }
+                                            });
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
+                        Tab::Text => {
+                            ui.label(
+                                RichText::new("A few words. A whole new story.")
+                                    .small()
+                                    .color(MUTED),
+                            );
+
+                            for (name, text, size) in [
+                                ("Statement", "YOUR NEXT\nGREAT STORY", 108),
+                                ("Section title", "THE BUILD", 76),
+                                ("Subtitle", "A small step toward something bigger.", 34),
+                                ("Technical label", "APOGEE  /  1,250 M", 40),
+                            ] {
+                                ui.add_space(10.);
+
+                                if ui
+                                    .add_sized(
+                                        [ui.available_width(), 75.],
+                                        egui::Button::new(
+                                            RichText::new(format!("{text}\n\n+ {name}"))
+                                                .color(Color32::from_rgb(215, 227, 209))
+                                                .size(14.),
+                                        ),
+                                    )
+                                    .clicked()
+                                {
+                                    self.add_layer(Kind::Title, Graphic::Arrow, text, size);
+                                }
+                            }
+                        }
+
+                        Tab::Graphics => {
+                            ui.label(
+                                RichText::new("Make the complicated feel simple.")
+                                    .small()
+                                    .color(MUTED),
+                            );
+
+                            for (g, label) in [
+                                (Graphic::Arrow, "→   Direction arrow"),
+                                (Graphic::Circle, "○   Highlight ellipse"),
+                                (Graphic::Rectangle, "□   Focus frame"),
+                                (Graphic::LowerThird, "T   Lower third"),
+                            ] {
+                                ui.add_space(10.);
+
+                                if ui
+                                    .add_sized(
+                                        [ui.available_width(), 55.],
+                                        egui::Button::new(label),
+                                    )
+                                    .clicked()
+                                {
+                                    self.add_layer(
+                                        Kind::Graphic,
+                                        g,
+                                        if g == Graphic::LowerThird {
+                                            "YOUR ANNOTATION"
+                                        } else {
+                                            "Graphic"
+                                        },
+                                        64,
+                                    );
+                                }
+                            }
+                        }
+
+                        Tab::Transitions => {
+                            ui.label(
+                                RichText::new("Select a clip, then choose its entrance.")
+                                    .small()
+                                    .color(MUTED),
+                            );
+
+                            for (t, label) in [
+                                (Transition::None, "Clean cut"),
+                                (Transition::Fade, "Fade in & out"),
+                                (Transition::Slide, "Slide from left"),
+                                (Transition::Zoom, "Gentle zoom"),
+                                (Transition::Wipe, "Wipe reveal"),
+                            ] {
+                                ui.add_space(10.);
+
+                                if ui
+                                    .add_sized(
+                                        [ui.available_width(), 50.],
+                                        egui::Button::new(label),
+                                    )
+                                    .clicked()
+                                {
+                                    if let Some(i) = self.selected_index() {
+                                        self.history.remember(&self.project);
+
+                                        self.project.clips[i].transition = t;
+
+                                        self.modified();
+                                    } else {
+                                        self.notify("Select a clip on the timeline first");
+                                    }
+                                }
+                            }
+                        }
+
+                        Tab::Effects => {
+                            ui.label(
+                                RichText::new("Find the feeling of your film.")
+                                    .small()
+                                    .color(MUTED),
+                            );
+
+                            for (name, b, ct, s, w) in [
+                                ("Original", 0., 1., 1., 0.),
+                                ("Golden hour", 0.03, 1.1, 1.15, 0.5),
+                                ("Cinematic cool", -0.04, 1.2, 0.8, -0.45),
+                                ("Documentary", 0.02, 1.15, 0.85, 0.1),
+                                ("Monochrome", 0., 1.2, 0., 0.),
+                            ] {
+                                ui.add_space(10.);
+
+                                if ui
+                                    .add_sized([ui.available_width(), 50.], egui::Button::new(name))
+                                    .clicked()
+                                {
+                                    if let Some(i) = self.selected_index() {
+                                        self.history.remember(&self.project);
+
+                                        let c = &mut self.project.clips[i];
+
+                                        c.brightness = b;
+
+                                        c.contrast = ct;
+
+                                        c.saturation = s;
+
+                                        c.warmth = w;
+
+                                        self.modified();
+                                    } else {
+                                        self.notify("Select a visual clip first");
+                                    }
+                                }
+                            }
+                        }
+
+                        _ => {}
+                    });
+                }
+            });
+    }
+
+    fn thumbnail(&mut self, ctx: &egui::Context, id: &str) -> Option<TextureHandle> {
+        if let Some(t) = self.thumb_cache.get(id) {
+            return Some(t.clone());
+        }
+
+        let path = self.storage.root.join("media").join(id).join("thumb.jpg");
+
+        let img = image::open(path).ok()?.to_rgb8();
+
+        let texture = ctx.load_texture(
+            id,
+            egui::ColorImage::from_rgb([img.width() as usize, img.height() as usize], img.as_raw()),
+            egui::TextureOptions::LINEAR,
+        );
+
+        if self.thumb_cache.len() >= 64 {
+            self.thumb_cache.clear();
+        }
+
+        self.thumb_cache.insert(id.into(), texture.clone());
+
+        Some(texture)
+    }
+
+    fn viewer(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(15, 18, 20))
+                    .inner_margin(18.),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("●").color(GREEN).size(9.));
+
+                    ui.label("Preview");
+
+                    ui.label(
+                        RichText::new(format!("{} × {}", self.project.width, self.project.height))
+                            .small()
+                            .color(MUTED),
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new("NATIVE · 640px PROXY").size(9.).color(MUTED));
+                    });
+                });
+
+                ui.add_space(12.);
+
+                let available =
+                    Vec2::new(ui.available_width(), (ui.available_height() - 88.).max(80.));
+
+                let ratio = self.project.width as f32 / self.project.height as f32;
+
+                let width = available.x.min(available.y * ratio);
+
+                let height = width / ratio;
+
+                let (area, _) = ui.allocate_exact_size(available, Sense::hover());
+
+                let rect = Rect::from_center_size(area.center(), Vec2::new(width, height));
+
+                ui.painter().rect_filled(rect, 4., Color32::BLACK);
+
+                if let Some(texture) = &self.preview_texture {
+                    ui.painter().image(
+                        texture.id(),
+                        rect,
+                        Rect::from_min_max(Pos2::ZERO, Pos2::new(1., 1.)),
+                        Color32::WHITE,
+                    );
+                } else {
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        if self.preview_running {
+                            "Preparing preview…"
+                        } else {
+                            "Your story starts here"
+                        },
+                        egui::FontId::proportional(15.),
+                        MUTED,
+                    );
+                }
+
+                ui.painter().rect_stroke(
+                    rect,
+                    4.,
+                    Stroke::new(1.0_f32, Color32::from_rgb(56, 65, 64)),
+                    StrokeKind::Inside,
+                );
+
+                if !self.last_error.is_empty() {
+                    ui.painter().rect_filled(
+                        Rect::from_min_max(
+                            rect.left_bottom() - Vec2::new(0., 60.),
+                            rect.right_bottom(),
+                        ),
+                        0.,
+                        Color32::from_black_alpha(210),
+                    );
+
+                    ui.painter().text(
+                        rect.left_bottom() + Vec2::new(12., -30.),
+                        egui::Align2::LEFT_CENTER,
+                        self.last_error.chars().take(100).collect::<String>(),
+                        egui::FontId::proportional(11.),
+                        Color32::LIGHT_RED,
+                    );
+                }
+
+                ui.add_space(12.);
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(timecode(self.time, self.project.fps)).monospace());
+
+                    ui.label(
+                        RichText::new(format!(
+                            "/ {}",
+                            timecode(self.project.duration(), self.project.fps)
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+
+                    ui.add_space((ui.available_width() / 2. - 160.).max(0.));
+
+                    if ui.button("|◀").on_hover_text("Beginning").clicked() {
+                        self.seek(0.);
+                    }
+
+                    if ui.button("‹").on_hover_text("Previous frame").clicked() {
+                        self.seek(self.time - 1. / self.project.fps as f64);
+                    }
+
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new(if self.playing { "Ⅱ" } else { "▶" })
+                                    .color(Color32::BLACK),
+                            )
+                            .fill(GREEN)
+                            .min_size(Vec2::new(38., 30.)),
+                        )
+                        .clicked()
+                    {
+                        self.toggle_play();
+                    }
+
+                    if ui.button("›").on_hover_text("Next frame").clicked() {
+                        self.seek(self.time + 1. / self.project.fps as f64);
+                    }
+
+                    if ui.button("▶|").clicked() {
+                        self.seek(self.project.duration());
+                    }
+                });
+
+                ui.add_space(8.);
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("■  Originals preserved")
+                            .small()
+                            .color(Color32::from_rgb(124, 151, 108)),
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("A little closer to your next great story.")
+                                .small()
+                                .color(MUTED),
+                        );
+                    });
+                });
+            });
+    }
+
+    fn inspector(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::right("inspector").default_width(265.).min_width(230.).max_width(370.).show(ctx,|ui|{
+
+  ui.horizontal(|ui|{
+ui.selectable_value(&mut self.property_tab,PropertyTab::Properties,"Properties");
+ui.selectable_value(&mut self.property_tab,PropertyTab::Audio,"Audio");
+ui.selectable_value(&mut self.property_tab,PropertyTab::Color,"Color");
+}
+);
+ui.separator();
+
+  let Some(index)=self.selected_index()else{
+ui.add_space(40.);
+ui.label(RichText::new("Make it yours").size(18.).color(GREEN));
+ui.label("Select a timeline clip to adjust its properties.");
+return;
+}
+;
+if let Some(media_id)=self.project.clips[index].asset_id.clone()
+
+ && !self.assets.contains_key(&media_id){
+ui.colored_label(Color32::LIGHT_RED,"Original is not linked in this library");
+if ui.button("Locate missing original…").clicked(){
+self.import_picker(Some(media_id));
+}
+}
+
+let old=self.project.clips[index].clone();
+let mut c=old.clone();
+
+  ui.add_space(8.);
+ui.label(RichText::new(&c.name).strong());
+ui.label(RichText::new(format!("{:?} LAYER",c.kind).to_uppercase()).size(9.).color(MUTED));
+ui.separator();
+
+  egui::ScrollArea::vertical().show(ui,|ui|{
+match self.property_tab {
+
+   PropertyTab::Properties=>{
+
+    if matches!(c.kind,Kind::Title|Kind::Graphic){
+ui.label(RichText::new("Text & appearance").strong());
+if (c.kind==Kind::Title||c.graphic==Graphic::LowerThird)&& ui.add(egui::TextEdit::multiline(&mut c.text).char_limit(3000).desired_rows(3).desired_width(ui.available_width())).changed(){
+c.name=c.text.lines().next().unwrap_or("Text").chars().take(70).collect();
+}
+
+     ui.horizontal(|ui|{
+ui.label("Color");
+let mut rgb=hex_color(&c.color);
+if ui.color_edit_button_srgb(&mut rgb).changed(){
+c.color=format!("#{:02x}{:02x}{:02x}",rgb[0],rgb[1],rgb[2]);
+}
+
+if c.kind==Kind::Title{
+ui.add(egui::DragValue::new(&mut c.font_size).range(12..=200).suffix(" px"));
+}
+}
+);
+ui.separator();
+}
+
+    if c.is_visual(){
+ui.horizontal(|ui|{
+ui.label(RichText::new("Transform").strong());
+if ui.small_button("Reset").clicked(){
+c.transform=Transform::default();
+c.keyframes.clear();
+}
+}
+);
+let local=(self.time-c.start).clamp(0.,c.duration);
+let mut trans=c.value(local);
+let before=trans.clone();
+ui.horizontal(|ui|{
+ui.label("X");
+ui.add(egui::DragValue::new(&mut trans.x).range(-100.0..=200.0).suffix("%"));
+ui.label("Y");
+ui.add(egui::DragValue::new(&mut trans.y).range(-100.0..=200.0).suffix("%"));
+}
+);
+ui.add(egui::Slider::new(&mut trans.scale,0.05..=4.).text("Scale").suffix("×"));
+ui.add(egui::Slider::new(&mut trans.rotation,-180.0..=180.0).text("Rotation").suffix("°"));
+ui.add(egui::Slider::new(&mut trans.opacity,0.0..=1.0).text("Opacity"));
+if trans!=before{
+if c.keyframes.is_empty(){
+c.transform=trans;
+}
+else{
+edit::add_keyframe(&mut c,local,self.project.fps);
+let t=(local*self.project.fps as f64).round()/self.project.fps as f64;
+if let Some(k)=c.keyframes.iter_mut().find(|k|(k.time-t).abs()<1e-8){
+k.transform=trans;
+}
+}
+}
+ui.separator();
+}
+
+    ui.label(RichText::new("Timing").strong());
+egui::ComboBox::from_id_salt("clip_track").selected_text(TRACKS[c.track]).show_ui(ui,|ui|{
+for(i,name)in TRACKS.iter().enumerate(){
+ui.selectable_value(&mut c.track,i,*name);
+}
+}
+);
+
+    ui.horizontal(|ui|{
+ui.label("Start");
+ui.add(egui::DragValue::new(&mut c.start).range(0.0..=(86400.-c.duration)).speed(1./self.project.fps as f64).suffix(" s"));
+}
+);
+
+    if matches!(c.kind,Kind::Video|Kind::Audio){
+let mut speed=c.speed;
+ui.horizontal(|ui|{
+ui.label("Speed");
+ui.add(egui::DragValue::new(&mut speed).range(0.000001..=1e12).speed(0.1).max_decimals(6).suffix("×"));
+}
+);
+if speed!=c.speed&& let Err(e)=c.set_speed(speed,self.project.fps){
+self.notify(e.to_string());
+}
+
+     let mut target=c.duration;
+ui.horizontal(|ui|{
+ui.label("Target duration");
+ui.add(egui::DragValue::new(&mut target).range((1./self.project.fps as f64)..=86400.).speed(0.1).max_decimals(3).suffix(" s"));
+}
+);
+if target!=c.duration{
+let speed=c.duration*c.speed/target;
+if let Err(e)=c.set_speed(speed,self.project.fps){
+self.notify(e.to_string());
+}
+}
+
+     ui.horizontal_wrapped(|ui|{
+for speed in [0.25,0.5,1.,2.,8.,32.,720.]{
+if ui.small_button(format!("{speed}×")).clicked()&& let Err(e)=c.set_speed(speed,self.project.fps){
+self.notify(e.to_string());
+}
+}
+}
+);
+ui.label(RichText::new("4 hours → 20 seconds = 720×").small().color(GREEN));
+
+    }
+else{
+ui.horizontal(|ui|{
+ui.label("Duration");
+ui.add(egui::DragValue::new(&mut c.duration).range((1./self.project.fps as f64)..=(86400.-c.start)).speed(0.1).suffix(" s"));
+}
+);
+}
+
+    ui.separator();
+if c.is_visual(){
+ui.horizontal(|ui|{
+ui.label(RichText::new("Animation").strong());
+if ui.small_button("+ Keyframe").clicked()&&c.keyframes.len()<200{
+edit::add_keyframe(&mut c,(self.time-old.start).clamp(0.,old.duration),self.project.fps);
+}
+}
+);
+ui.label(RichText::new("Add a keyframe, move the playhead, then change the transform.").small().color(MUTED));
+let mut remove=None;
+for(i,k)in c.keyframes.iter().enumerate(){
+ui.horizontal(|ui|{
+if ui.small_button(format!("◇ {}",timecode(k.time,self.project.fps))).clicked(){
+self.seek(c.start+k.time);
+}
+
+if ui.small_button("×").clicked(){
+remove=Some(i);
+}
+}
+);
+}
+
+if let Some(i)=remove{
+c.keyframes.remove(i);
+}
+
+if c.keyframes.is_empty(){
+ui.label(RichText::new("No keyframes yet").small().color(MUTED));
+}
+ui.separator();
+
+     ui.label(RichText::new("Mask & transition").strong());
+egui::ComboBox::from_id_salt("mask").selected_text(format!("{:?}",c.mask)).show_ui(ui,|ui|{
+for v in [Mask::None,Mask::Circle,Mask::Rectangle]{
+ui.selectable_value(&mut c.mask,v,format!("{v:?}"));
+}
+}
+);
+
+    }
+
+    egui::ComboBox::from_id_salt("transition").selected_text(format!("{:?}",c.transition)).show_ui(ui,|ui|{
+for v in [Transition::None,Transition::Fade,Transition::Slide,Transition::Zoom,Transition::Wipe]{
+ui.selectable_value(&mut c.transition,v,format!("{v:?}"));
+}
+}
+);
+if c.transition!=Transition::None{
+ui.add(egui::Slider::new(&mut c.fade_duration,0.05..=5.).text("Length").suffix(" s"));
+}
+
+   }
+,
+   PropertyTab::Audio=>{
+ui.label(RichText::new("Audio mix").strong());
+if matches!(c.kind,Kind::Video|Kind::Audio){
+ui.add(egui::Slider::new(&mut c.volume,0.0..=2.0).text("Volume").suffix("×"));
+if ui.button(if c.volume==0.{
+"Unmute clip"}
+else{
+"Mute clip"}
+).clicked(){
+c.volume=if c.volume==0.{
+1.}
+else{
+0.}
+;
+}
+ui.label(RichText::new("Pitch-preserved retiming and fades apply in both preview and export. Native audio preview requires FFplay and an available audio device.").small().color(MUTED));
+}
+else{
+ui.label("This layer has no audio. Select a video or audio clip.");
+}
+}
+,
+   PropertyTab::Color=>{
+ui.horizontal(|ui|{
+ui.label(RichText::new("Color adjustments").strong());
+if ui.small_button("Reset").clicked(){
+c.brightness=0.;
+c.contrast=1.;
+c.saturation=1.;
+c.warmth=0.;
+c.blur=0.;
+}
+}
+);
+ui.add(egui::Slider::new(&mut c.brightness,-1.0..=1.0).text("Brightness"));
+ui.add(egui::Slider::new(&mut c.contrast,0.0..=3.0).text("Contrast"));
+ui.add(egui::Slider::new(&mut c.saturation,0.0..=3.0).text("Saturation"));
+ui.add(egui::Slider::new(&mut c.warmth,-1.0..=1.0).text("Temperature"));
+ui.add(egui::Slider::new(&mut c.blur,0.0..=20.0).text("Softness"));
+
+    if c.kind==Kind::Video{
+ui.add_space(15.);
+egui::Frame::new().fill(Color32::from_rgb(37,49,33)).inner_margin(12.).corner_radius(6.).show(ui,|ui|{
+ui.label(RichText::new("✦ Clean Timelapse").color(GREEN).strong());
+ui.label(RichText::new("Blend the motion. Keep the detail.").small());
+ui.horizontal(|ui|{
+for speed in [8.,32.,720.]{
+if ui.add_enabled(c.duration*c.speed/speed>=1./self.project.fps as f64,egui::Button::new(format!("{speed}×"))).clicked()&& c.set_speed(speed,self.project.fps).is_ok(){
+c.motion_blur=true;
+c.deflicker=true;
+c.volume=0.;
+}
+}
+}
+);
+ui.checkbox(&mut c.motion_blur,"Motion blending");
+ui.add(egui::Slider::new(&mut c.shutter,0.1..=1.0).text("Strength"));
+ui.checkbox(&mut c.deflicker,"Reduce exposure flicker");
+ui.label(RichText::new("Up to 16 source samples per exposure window. Temporal effects apply on export.").small().color(MUTED));
+}
+);
+}
+
+   }
+
+  }
+}
+);
+
+  if c!=old{
+let pointer_down=ctx.input(|i|i.pointer.any_down());
+if !self.property_drag||!pointer_down{
+self.history.remember(&self.project);
+}
+self.property_drag=pointer_down;
+self.project.clips[index]=c;
+self.modified();
+}
+
+if !ctx.input(|i|i.pointer.any_down()){
+self.property_drag=false;
+}
+
+ }
+);
+    }
+
+    fn timeline(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("timeline")
+            .default_height(322.)
+            .min_height(280.)
+            .max_height(480.)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(self.history.can_undo(), egui::Button::new("↶"))
+                        .on_hover_text("Undo")
+                        .clicked()
+                    {
+                        self.history.undo(&mut self.project);
+
+                        self.modified();
+                    }
+
+                    if ui
+                        .add_enabled(self.history.can_redo(), egui::Button::new("↷"))
+                        .on_hover_text("Redo")
+                        .clicked()
+                    {
+                        self.history.redo(&mut self.project);
+
+                        self.modified();
+                    }
+
+                    ui.separator();
+
+                    if ui
+                        .button("Split")
+                        .on_hover_text("Split at playhead (S)")
+                        .clicked()
+                    {
+                        self.split();
+                    }
+
+                    if ui.button("Duplicate").clicked() {
+                        self.duplicate();
+                    }
+
+                    if ui.button("Delete").clicked() {
+                        self.delete();
+                    }
+
+                    ui.separator();
+
+                    ui.checkbox(&mut self.snap, "Snap");
+
+                    if ui.button("Remove frames").clicked() {
+                        self.range = [self.time, self.time + 1. / self.project.fps as f64];
+
+                        self.range_window = true;
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Fit").clicked() {
+                            self.zoom = ((ui.available_width() + 550.) as f64
+                                / self.project.duration().max(10.))
+                                as f32;
+
+                            self.zoom = self.zoom.clamp(0.03, 150.);
+                        }
+
+                        ui.add(
+                            egui::Slider::new(&mut self.zoom, 0.03..=150.)
+                                .logarithmic(true)
+                                .show_value(false)
+                                .max_decimals(2),
+                        );
+
+                        ui.label(RichText::new("Timeline zoom").small().color(MUTED));
+                    });
+                });
+
+                ui.separator();
+
+                let row = 43.;
+
+                let ruler = 26.;
+
+                ui.horizontal_top(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(155.);
+
+                        ui.add_sized(
+                            [155., ruler],
+                            egui::Label::new(
+                                RichText::new(format!("{} FPS  /  TRACKS", self.project.fps))
+                                    .small()
+                                    .color(MUTED),
+                            ),
+                        );
+
+                        for (track, name) in TRACKS.iter().enumerate() {
+                            ui.allocate_ui(Vec2::new(155., row - 9.), |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new("▏").color(TRACK_COLORS[track]));
+
+                                    ui.label(RichText::new(*name).size(10.));
+
+                                    let active = if track >= 3 {
+                                        self.project.muted_tracks.contains(&track)
+                                    } else {
+                                        self.project.hidden_tracks.contains(&track)
+                                    };
+
+                                    if ui
+                                        .small_button(if active { "○" } else { "●" })
+                                        .on_hover_text(if track >= 3 {
+                                            "Mute / unmute track"
+                                        } else {
+                                            "Hide / show track"
+                                        })
+                                        .clicked()
+                                    {
+                                        self.history.remember(&self.project);
+
+                                        let list = if track >= 3 {
+                                            &mut self.project.muted_tracks
+                                        } else {
+                                            &mut self.project.hidden_tracks
+                                        };
+
+                                        if list.contains(&track) {
+                                            list.retain(|t| *t != track);
+                                        } else {
+                                            list.push(track);
+                                        }
+
+                                        self.modified();
+                                    }
+                                });
+                            });
+                        }
+                    });
+
+                    egui::ScrollArea::horizontal()
+                        .id_salt("timeline_scroll")
+                        .max_height(ruler + row * 5. + 8.)
+                        .auto_shrink([false, true])
+                        .show_viewport(ui, |ui, viewport| {
+                            let width = ((self.project.duration() + 8.).max(30.) as f32
+                                * self.zoom)
+                                .max(viewport.width());
+
+                            let height = ruler + row * 5.;
+
+                            let (rect, response) =
+                                ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+
+                            let painter = ui.painter_at(rect);
+
+                            let origin = rect.min;
+
+                            let step = if self.zoom < 0.5 {
+                                600.
+                            } else if self.zoom < 3. {
+                                60.
+                            } else if self.zoom < 20. {
+                                10.
+                            } else if self.zoom < 45. {
+                                5.
+                            } else {
+                                2.
+                            };
+
+                            let left =
+                                (viewport.left() / self.zoom / step).floor().max(0.) as usize;
+
+                            let right = (viewport.right() / self.zoom / step).ceil() as usize + 1;
+
+                            for i in left..right {
+                                let x = origin.x + i as f32 * step * self.zoom;
+
+                                painter.line_segment(
+                                    [
+                                        Pos2::new(x, origin.y + ruler - 5.),
+                                        Pos2::new(x, origin.y + height),
+                                    ],
+                                    Stroke::new(1.0_f32, Color32::from_rgb(36, 42, 45)),
+                                );
+
+                                painter.text(
+                                    Pos2::new(x + 5., origin.y + 8.),
+                                    egui::Align2::LEFT_TOP,
+                                    timecode(i as f64 * step as f64, self.project.fps),
+                                    egui::FontId::monospace(9.),
+                                    MUTED,
+                                );
+                            }
+
+                            for track in 0..5 {
+                                painter.line_segment(
+                                    [
+                                        origin + Vec2::new(0., ruler + row * track as f32),
+                                        origin + Vec2::new(width, ruler + row * track as f32),
+                                    ],
+                                    Stroke::new(1.0_f32, Color32::from_rgb(42, 46, 49)),
+                                );
+                            }
+
+                            // Snapshot only visible clips. Keyframes/text for off-screen footage must not
+                            // be cloned on every redraw of a large timeline.
+                            let view_start = viewport.left() as f64 / self.zoom as f64;
+                            let view_end = viewport.right() as f64 / self.zoom as f64;
+                            let clips: Vec<_> = self
+                                .project
+                                .clips
+                                .iter()
+                                .filter(|c| c.end() >= view_start && c.start <= view_end)
+                                .cloned()
+                                .collect();
+
+                            for c in clips.iter() {
+                                let x = origin.x + c.start as f32 * self.zoom;
+
+                                let cw = (c.duration as f32 * self.zoom).max(4.);
+
+                                if x + cw < rect.left() + viewport.left()
+                                    || x > rect.left() + viewport.right()
+                                {
+                                    continue;
+                                }
+
+                                let peers: Vec<_> = clips
+                                    .iter()
+                                    .filter(|other| {
+                                        other.track == c.track
+                                            && other.start < c.end()
+                                            && other.end() > c.start
+                                    })
+                                    .collect();
+
+                                let lane =
+                                    peers.iter().position(|other| other.id == c.id).unwrap_or(0);
+
+                                let ch = (row - 7.) / peers.len().max(1) as f32;
+
+                                let clip_rect = Rect::from_min_size(
+                                    Pos2::new(
+                                        x,
+                                        origin.y
+                                            + ruler
+                                            + row * c.track as f32
+                                            + 3.
+                                            + lane as f32 * ch,
+                                    ),
+                                    Vec2::new(cw, ch - 1.),
+                                );
+
+                                let selected = self.selected.as_deref() == Some(&c.id);
+
+                                let mut color = TRACK_COLORS[c.track];
+
+                                if self.project.hidden_tracks.contains(&c.track)
+                                    || self.project.muted_tracks.contains(&c.track)
+                                {
+                                    color = color.gamma_multiply(0.4);
+                                }
+
+                                painter.rect_filled(clip_rect, 4., color.gamma_multiply(0.28));
+
+                                painter.rect_stroke(
+                                    clip_rect,
+                                    4.,
+                                    Stroke::new(
+                                        if selected { 1.5_f32 } else { 1.0_f32 },
+                                        if selected {
+                                            GREEN
+                                        } else {
+                                            color.gamma_multiply(0.7)
+                                        },
+                                    ),
+                                    StrokeKind::Inside,
+                                );
+
+                                if cw > 22. {
+                                    painter.with_clip_rect(clip_rect.shrink(3.)).text(
+                                        clip_rect.left_top() + Vec2::new(6., 5.),
+                                        egui::Align2::LEFT_TOP,
+                                        &c.name,
+                                        egui::FontId::proportional(9.),
+                                        color,
+                                    );
+                                }
+
+                                for key in &c.keyframes {
+                                    let x = clip_rect.left() + key.time as f32 * self.zoom;
+
+                                    painter.circle_filled(
+                                        Pos2::new(x, clip_rect.bottom() - 5.),
+                                        2.,
+                                        GREEN,
+                                    );
+                                }
+
+                                if c.transition != Transition::None {
+                                    let fade = (c.fade_duration.min(c.duration / 2.) as f32
+                                        * self.zoom)
+                                        .min(cw / 2.);
+
+                                    painter.line_segment(
+                                        [
+                                            clip_rect.left_bottom(),
+                                            clip_rect.left_top() + Vec2::new(fade, 0.),
+                                        ],
+                                        Stroke::new(1.0_f32, GREEN.gamma_multiply(0.5)),
+                                    );
+                                }
+
+                                let response = ui.interact(
+                                    clip_rect,
+                                    ui.id().with(&c.id),
+                                    Sense::click_and_drag(),
+                                );
+
+                                if response.clicked() {
+                                    self.select(c.id.clone());
+                                }
+
+                                if response.drag_started() {
+                                    self.history.remember(&self.project);
+
+                                    self.select(c.id.clone());
+
+                                    let pointer = response
+                                        .interact_pointer_pos()
+                                        .unwrap_or(clip_rect.center())
+                                        .x;
+
+                                    let edge = if pointer - clip_rect.left() < 8. {
+                                        -1
+                                    } else if clip_rect.right() - pointer < 8. {
+                                        1
+                                    } else {
+                                        0
+                                    };
+
+                                    self.drag = Some(Drag {
+                                        clip: c.clone(),
+                                        pointer,
+                                        edge,
+                                    });
+                                }
+
+                                if response.dragged()
+                                    && let Some(d) = &self.drag
+                                    && d.clip.id == c.id
+                                {
+                                    let pointer = response
+                                        .interact_pointer_pos()
+                                        .unwrap_or(clip_rect.center())
+                                        .x;
+
+                                    let delta = (pointer - d.pointer) as f64 / self.zoom as f64;
+
+                                    let original = d.clip.clone();
+
+                                    let mut edited = original.clone();
+
+                                    if d.edge == 0 {
+                                        edited.start = (original.start + delta).max(0.);
+
+                                        if self.snap {
+                                            let points = clips
+                                                .iter()
+                                                .filter(|other| {
+                                                    other.id != c.id && other.track == c.track
+                                                })
+                                                .flat_map(|other| [other.start, other.end()])
+                                                .chain([0., self.time]);
+
+                                            for point in points {
+                                                if (edited.start - point).abs()
+                                                    < 7. / self.zoom as f64
+                                                {
+                                                    edited.start = point;
+
+                                                    break;
+                                                }
+
+                                                if (edited.end() - point).abs()
+                                                    < 7. / self.zoom as f64
+                                                {
+                                                    edited.start =
+                                                        (point - edited.duration).max(0.);
+
+                                                    break;
+                                                }
+                                            }
+                                        }
+
+                                        edited.start = (edited.start * self.project.fps as f64)
+                                            .round()
+                                            / self.project.fps as f64;
+                                    } else if d.edge == 1 {
+                                        let max = original
+                                            .asset_id
+                                            .as_ref()
+                                            .and_then(|id| self.assets.get(id))
+                                            .filter(|_| {
+                                                matches!(original.kind, Kind::Video | Kind::Audio)
+                                            })
+                                            .map_or(86400. - original.start, |a| {
+                                                (a.duration - original.source_in) / original.speed
+                                            });
+
+                                        edited.duration = (original.duration + delta).clamp(
+                                            1. / self.project.fps as f64,
+                                            max.max(1. / self.project.fps as f64),
+                                        );
+                                    } else {
+                                        let min =
+                                            if matches!(original.kind, Kind::Video | Kind::Audio) {
+                                                -original
+                                                    .start
+                                                    .min(original.source_in / original.speed)
+                                            } else {
+                                                -original.start
+                                            };
+
+                                        let delta = delta.clamp(
+                                            min,
+                                            original.duration - 1. / self.project.fps as f64,
+                                        );
+
+                                        edited.start += delta;
+
+                                        edited.duration -= delta;
+
+                                        edited.source_in =
+                                            (edited.source_in + delta * edited.speed).max(0.);
+
+                                        if !original.keyframes.is_empty() {
+                                            edited.keyframes = original
+                                                .keyframes
+                                                .iter()
+                                                .filter(|k| k.time > delta)
+                                                .map(|k| Keyframe {
+                                                    time: k.time - delta,
+                                                    transform: k.transform.clone(),
+                                                })
+                                                .collect();
+
+                                            edited.keyframes.insert(
+                                                0,
+                                                Keyframe {
+                                                    time: 0.,
+                                                    transform: original.value(delta),
+                                                },
+                                            );
+                                        }
+                                    }
+
+                                    if let Some(index) =
+                                        self.project.clips.iter().position(|c| c.id == edited.id)
+                                    {
+                                        self.project.clips[index] = edited;
+
+                                        self.modified();
+                                    }
+                                }
+
+                                if response.drag_stopped() {
+                                    self.drag = None;
+                                }
+                            }
+
+                            if response.clicked()
+                                && let Some(pos) = response.interact_pointer_pos()
+                            {
+                                self.seek(((pos.x - origin.x) / self.zoom) as f64);
+                            }
+
+                            if let Some(asset) = response.dnd_release_payload::<String>()
+                                && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+                            {
+                                let at = ((pos.x - origin.x) / self.zoom) as f64;
+
+                                let track = ((pos.y - origin.y - ruler) / row).floor().clamp(0., 4.)
+                                    as usize;
+
+                                self.add_asset(&asset, Some(at.max(0.)), Some(track));
+                            }
+
+                            let px = origin.x + self.time as f32 * self.zoom;
+
+                            painter.line_segment(
+                                [
+                                    Pos2::new(px, origin.y + 8.),
+                                    Pos2::new(px, origin.y + height),
+                                ],
+                                Stroke::new(1.0_f32, GREEN),
+                            );
+
+                            painter.rect_filled(
+                                Rect::from_center_size(
+                                    Pos2::new(px, origin.y + 5.),
+                                    Vec2::new(9., 10.),
+                                ),
+                                1.,
+                                GREEN,
+                            );
+
+                            let scrub = ui.interact(
+                                Rect::from_min_size(rect.min, Vec2::new(width, ruler)),
+                                ui.id().with("scrub"),
+                                Sense::click_and_drag(),
+                            );
+
+                            if (scrub.clicked() || scrub.dragged())
+                                && let Some(pos) = scrub.interact_pointer_pos()
+                            {
+                                self.seek(((pos.x - origin.x) / self.zoom) as f64);
+                            }
+                        });
+                });
+
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "● Native Rust engine  /  {} clips  /  {} total",
+                            self.project.clips.len(),
+                            timecode(self.project.duration(), self.project.fps)
+                        ))
+                        .small()
+                        .color(MUTED),
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new("Space  Play / pause    S  Split    ← →  Frame by frame")
+                                .small()
+                                .color(MUTED),
+                        );
+                    });
+                });
+            });
+    }
+
+    fn dialogs(&mut self, ctx: &egui::Context) {
+        let mut open = self.export_window;
+
+        egui::Window::new("Let your story take flight").open(&mut open).collapsible(false).resizable(false).default_width(410.).show(ctx,|ui|{
+ui.label(RichText::new("READY FOR LIFTOFF").small().color(GREEN));
+ui.add_space(10.);
+ui.label("Render from your originals. MP4 · H.264 · AAC.");
+ui.label(RichText::new(format!("{}  /  {} fps  /  {} clips",timecode(self.project.duration(),self.project.fps),self.project.fps,self.project.clips.len())).small().color(MUTED));
+ui.add_space(10.);
+egui::ComboBox::from_id_salt("export_size").selected_text(format!("{} × {}",self.export_size[0],self.export_size[1])).show_ui(ui,|ui|{
+for(size,label)in[([640,360],"360p · Fast test"),([1280,720],"720p"),([1920,1080],"1080p"),([3840,2160],"4K UHD"),([1080,1920],"Vertical / Shorts"),([1080,1080],"Square")]{
+ui.selectable_value(&mut self.export_size,size,label);
+}
+}
+);
+
+   if let Some(job)=&self.job{
+ui.add_space(12.);
+ui.label(RichText::new(&job.status).strong().color(if job.status=="Failed"{
+Color32::LIGHT_RED}
+else{
+GREEN}
+));
+ui.add(egui::ProgressBar::new(job.progress as f32).show_percentage());
+if let Some(error)=&job.error{
+ui.label(RichText::new(error).small().color(Color32::LIGHT_RED));
+}
+
+if job.status=="Complete"&& let Some(path)=&job.output{
+ui.label(RichText::new(format!("Saved to {}",path.display())).small());
+}
+}
+
+   let running=self.exports.as_ref().is_some_and(|(_,h)|!h.is_finished());
+ui.add_space(10.);
+if ui.add_enabled(!running,egui::Button::new(RichText::new("Export video…").color(Color32::BLACK)).fill(GREEN)).clicked(){
+self.export();
+}
+
+if running&&ui.button("Cancel export").clicked()&& let Some((group,_))=&self.exports{
+group.cancel();
+}
+ui.label(RichText::new("Choose a new filename. Existing videos are never overwritten. Keep Frame open until rendering finishes.").small().color(MUTED));
+}
+);
+
+        self.export_window = open;
+
+        let mut open = self.settings_window;
+
+        egui::Window::new("Project settings")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                let old = self.project.clone();
+
+                ui.label("Project name");
+
+                ui.text_edit_singleline(&mut self.project.name);
+
+                ui.add_space(10.);
+
+                egui::ComboBox::from_id_salt("canvas")
+                    .selected_text(format!("{} × {}", self.project.width, self.project.height))
+                    .show_ui(ui, |ui| {
+                        for (w, h, label) in [
+                            (1920, 1080, "YouTube · 1080p"),
+                            (3840, 2160, "YouTube · 4K"),
+                            (1080, 1920, "Shorts · vertical"),
+                            (1080, 1080, "Square"),
+                        ] {
+                            if ui
+                                .selectable_label(
+                                    self.project.width == w && self.project.height == h,
+                                    label,
+                                )
+                                .clicked()
+                            {
+                                self.project.width = w;
+
+                                self.project.height = h;
+                            }
+                        }
+                    });
+
+                ui.add(egui::Slider::new(&mut self.project.fps, 12..=60).text("Frame rate"));
+
+                ui.add_space(10.);
+
+                ui.label(
+                    RichText::new(format!(
+                        "Cache and projects: {}",
+                        self.storage.root.display()
+                    ))
+                    .small()
+                    .color(MUTED),
+                );
+
+                if self.project != old {
+                    if self.project.validate().is_ok() {
+                        self.history.remember(&old);
+
+                        self.modified();
+                    } else {
+                        self.project = old;
+
+                        self.notify(
+                            "These settings would make an existing clip shorter than one frame",
+                        );
+                    }
+                }
+            });
+
+        self.settings_window = open;
+
+        let mut open = self.range_window;
+
+        egui::Window::new("Remove frames & close gap")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label("Delete this range across every track. Undo is available.");
+
+                ui.horizontal(|ui| {
+                    ui.label("From");
+
+                    ui.add(
+                        egui::DragValue::new(&mut self.range[0])
+                            .range(0.0..=86400.)
+                            .speed(1. / self.project.fps as f64)
+                            .suffix(" s"),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("To");
+
+                    ui.add(
+                        egui::DragValue::new(&mut self.range[1])
+                            .range(0.0..=86400.)
+                            .speed(1. / self.project.fps as f64)
+                            .suffix(" s"),
+                    );
+                });
+
+                let frames = ((self.range[1] - self.range[0]) * self.project.fps as f64).round();
+
+                if ui
+                    .add_enabled(
+                        frames > 0.,
+                        egui::Button::new(format!("Remove {} frames", frames.max(0.))),
+                    )
+                    .clicked()
+                {
+                    self.history.remember(&self.project);
+
+                    edit::remove_range(&mut self.project, self.range[0], self.range[1]);
+
+                    self.time = self.range[0].min(self.project.duration());
+
+                    self.modified();
+
+                    self.range_window = false;
+                }
+            });
+
+        self.range_window &= open;
+
+        let mut open = self.snapshots_window;
+
+        egui::Window::new("Project snapshots")
+            .open(&mut open)
+            .default_width(420.)
+            .show(ctx, |ui| {
+                ui.label(
+                    RichText::new("Your work is preserved before switching projects.")
+                        .small()
+                        .color(MUTED),
+                );
+
+                egui::ScrollArea::vertical()
+                    .max_height(320.)
+                    .show(ui, |ui| {
+                        for (name, path) in self.storage.snapshots() {
+                            if ui.button(format!("↶  {name}")).clicked() {
+                                match load_project(&path) {
+                                    Ok(p) => {
+                                        self.switch(p);
+
+                                        self.snapshots_window = false;
+                                    }
+
+                                    Err(e) => self.notify(e.to_string()),
+                                }
+                            }
+                        }
+                    });
+            });
+
+        self.snapshots_window &= open;
+
+        let mut open = self.help_window;
+
+        egui::Window::new("Find your flow").open(&mut open).resizable(false).show(ctx,|ui|{
+ui.heading("A little less clicking");
+for(action,key)in[("Play / pause","Space"),("Split selected clip","S"),("Previous / next frame","← / →"),("Jump 10 frames","Shift + ← / →"),("Delete clip","Delete"),("Undo / redo","Ctrl/Cmd Z / Shift Z"),("Save project","Ctrl/Cmd S")]{
+ui.horizontal(|ui|{
+ui.label(action);
+ui.label(RichText::new(key).monospace().color(GREEN));
+}
+);
+}
+ui.separator();
+ui.label("Drag original files into the app to link them. Use + to add media to the timeline. Drag clip edges to trim. GPU draws the interface; FFmpeg processes video on CPU. Preview audio requires FFplay.");
+ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Optical flow, speed ramps, tracking, HDR and arbitrary masks are not implemented.").small().color(MUTED));
+}
+);
+
+        self.help_window = open;
+
+        if let Some((text, _)) = &self.notice {
+            egui::Area::new("notice".into())
+                .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0., -35.))
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .fill(Color32::from_rgb(42, 55, 39))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(83, 105, 68)))
+                        .inner_margin(14.)
+                        .corner_radius(7.)
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(text).color(Color32::from_rgb(220, 235, 207)));
+                        });
+                });
+        }
+
+        if self.quit_error {
+            egui::Window::new("Frame could not save your latest edits")
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    ui.label("Stay open to download a project backup, or close without saving.");
+
+                    ui.label(RichText::new(&self.last_error).color(Color32::LIGHT_RED));
+
+                    if ui.button("Download project backup…").clicked() {
+                        self.backup();
+                    }
+
+                    if ui.button("Stay in Frame").clicked() {
+                        self.quit_error = false;
+                    }
+
+                    if ui.button("Close without saving latest edits").clicked() {
+                        self.dirty = None;
+
+                        self.quit_error = false;
+
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+        }
+    }
+
+    pub fn draw(&mut self, ctx: &egui::Context) {
+        self.poll(ctx);
+
+        self.shortcuts(ctx);
+
+        self.top(ctx);
+
+        self.timeline(ctx);
+
+        self.library(ctx);
+
+        self.inspector(ctx);
+
+        self.viewer(ctx);
+
+        self.dialogs(ctx);
+    }
+}
+
+impl eframe::App for FrameApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.viewport().close_requested()) && self.dirty.is_some() && !self.save() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+
+            self.quit_error = true;
+        }
+
+        self.draw(ctx);
+    }
+}
+
+impl Drop for FrameApp {
+    fn drop(&mut self) {
+        self.preview.stop();
+
+        self.import_group.cancel();
+
+        self.imports = None;
+
+        for handle in self.import_threads.drain(..) {
+            let _ = handle.join();
+        }
+
+        if let Some((group, handle)) = self.exports.take() {
+            group.cancel();
+
+            let _ = handle.join();
+        }
+
+        if self.dirty.is_some() {
+            let _ = self.storage.save(&self.project);
+        }
+    }
+}
+
+pub fn demo_project() -> Project {
+    let mut p = Project {
+        name: "A little closer to space".into(),
+        ..Project::default()
+    };
+
+    for (id, name, start, duration) in [
+        ("demo-0", "01 · Launch day", 0., 8.),
+        ("demo-1", "02 · From the workbench", 8., 7.),
+        ("demo-2", "03 · Into the sky", 15., 9.),
+    ] {
+        p.clips.push(Clip {
+            asset_id: Some(id.into()),
+            kind: Kind::Image,
+            name: name.into(),
+            start,
+            duration,
+            transition: Transition::Fade,
+            ..Clip::default()
+        });
+    }
+
+    let a = Transform {
+        x: 34.,
+        y: 46.,
+        scale: 0.8,
+        ..Transform::default()
+    };
+
+    let b = Transform {
+        x: 34.,
+        y: 42.,
+        scale: 0.84,
+        ..Transform::default()
+    };
+
+    p.clips.push(Clip {
+        kind: Kind::Title,
+        name: "A LITTLE CLOSER TO SPACE".into(),
+        text: "A LITTLE CLOSER\nTO SPACE".into(),
+        font_size: 108,
+        track: 0,
+        duration: 6.,
+        transform: a.clone(),
+        transition: Transition::Fade,
+        keyframes: vec![
+            Keyframe {
+                time: 0.,
+                transform: a,
+            },
+            Keyframe {
+                time: 6.,
+                transform: b,
+            },
+        ],
+        ..Clip::default()
+    });
+
+    p.clips.push(Clip {
+        kind: Kind::Title,
+        name: "THE ROCKET DIARIES / EP. 001".into(),
+        text: "THE ROCKET DIARIES   /   EP. 001".into(),
+        font_size: 25,
+        track: 0,
+        duration: 6.,
+        transform: Transform {
+            x: 34.,
+            y: 61.,
+            ..Transform::default()
+        },
+        color: "#b2ccbd".into(),
+        transition: Transition::Fade,
+        ..Clip::default()
+    });
+
+    p.clips.push(Clip {
+        kind: Kind::Graphic,
+        graphic: Graphic::LowerThird,
+        name: "Build annotation".into(),
+        text: "01  /  FROM THE WORKBENCH".into(),
+        track: 0,
+        start: 9.,
+        duration: 5.,
+        color: "#c6e99d".into(),
+        transition: Transition::Slide,
+        ..Clip::default()
+    });
+
+    p
+}
+
+fn hex_color(s: &str) -> [u8; 3] {
+    let n = u32::from_str_radix(s.trim_start_matches('#'), 16).unwrap_or(0xffffff);
+
+    [(n >> 16) as u8, (n >> 8) as u8, n as u8]
+}
+
+fn format_bytes(n: u64) -> String {
+    if n >= 1_000_000_000 {
+        format!("{:.1} GB", n as f64 / 1e9)
+    } else {
+        format!("{:.1} MB", n as f64 / 1e6)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    fn input(events: Vec<egui::Event>, modifiers: egui::Modifiers) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1440., 960.))),
+            events,
+            modifiers,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn native_ui_draws_and_keyboard_edits_can_undo() {
+        let temp = tempfile::TempDir::new().unwrap();
+
+        let mut app = FrameApp::new(Storage::open(temp.path().into()).unwrap()).unwrap();
+
+        let ctx = egui::Context::default();
+
+        FrameApp::configure(&ctx);
+
+        let output = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+            app.draw(ctx)
+        });
+
+        assert!(
+            output.shapes.len() > 30,
+            "Native editor must paint its actual controls and timeline"
+        );
+
+        assert_eq!(app.project.clips.len(), 6);
+
+        let event = egui::Event::Key {
+            key: egui::Key::S,
+            physical_key: Some(egui::Key::S),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        };
+
+        let _ = ctx.run(input(vec![event], egui::Modifiers::default()), |ctx| {
+            app.draw(ctx)
+        });
+
+        assert_eq!(
+            app.project.clips.len(),
+            7,
+            "S must split the selected native timeline clip"
+        );
+
+        app.history.undo(&mut app.project);
+
+        assert_eq!(app.project.clips.len(), 6);
+
+        app.project.validate().unwrap();
+    }
+
+    #[test]
+    fn switching_projects_preserves_a_restorable_snapshot() {
+        let temp = tempfile::TempDir::new().unwrap();
+
+        let mut app = FrameApp::new(Storage::open(temp.path().into()).unwrap()).unwrap();
+
+        let original = app.project.clone();
+
+        app.switch(Project::default());
+
+        assert!(app.project.clips.is_empty());
+
+        let snaps = app.storage.snapshots();
+
+        assert_eq!(snaps.len(), 1);
+
+        assert_eq!(load_project(&snaps[0].1).unwrap(), original);
+    }
+
+    #[test]
+    fn pending_native_edits_are_saved_on_drop() {
+        let temp = tempfile::TempDir::new().unwrap();
+
+        let root = temp.path().to_owned();
+
+        {
+            let mut app = FrameApp::new(Storage::open(root.clone()).unwrap()).unwrap();
+
+            app.project.name = "Saved at native shutdown".into();
+
+            app.modified();
+        }
+
+        let storage = Storage::open(root).unwrap();
+
+        assert_eq!(
+            storage.load().unwrap().unwrap().name,
+            "Saved at native shutdown"
+        );
+    }
+}
