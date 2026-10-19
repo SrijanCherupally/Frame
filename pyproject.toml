@@ -1,0 +1,9 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "C4", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_backend.py" = ["E402"]
