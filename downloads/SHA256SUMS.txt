@@ -1,0 +1,2 @@
+2381cbb146dcedba6c0278cdcfe4dbc757040316bc2a100cc2da1c4ae9decd46  Frame-Windows-x64.zip
+43c900af8d15ccf1cdbc7144ea64f5e6aa6310881f769f32bdf6ddf052f57561  Frame.exe

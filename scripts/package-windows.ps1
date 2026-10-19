@@ -23,6 +23,7 @@ if ($LASTEXITCODE -ne 0) { throw "Native Windows build failed." }
 New-Item -ItemType Directory -Path $packagePath | Out-Null
 Copy-Item "target/release/frame.exe" (Join-Path $packagePath "Frame.exe")
 Copy-Item "README.md" $packagePath
+Copy-Item "scripts/portable/*" $packagePath
 Copy-Item "examples/projects" (Join-Path $packagePath "Templates") -Recurse
 Copy-Item "THIRD-PARTY-LICENSES.txt" $packagePath
 Copy-Item "assets/fonts/LICENSE-DejaVu.txt" $packagePath

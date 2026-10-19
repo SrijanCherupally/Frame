@@ -1,0 +1,31 @@
+FRAME FOR WINDOWS — QUICK START
+
+1. Extract the entire ZIP (right-click it and choose Extract All).
+2. Double-click Start-Frame.cmd in the extracted folder.
+
+The first launch downloads FFmpeg, FFprobe and FFplay from:
+https://www.gyan.dev/ffmpeg/builds/
+The publisher's SHA-256 checksum is verified before extraction.
+The tools stay in the MediaTools folder beside the app. No administrator
+access, Rust, compiler, Node.js, npm, or PATH configuration is required.
+Keep the setup window open until Frame opens. Internet access and space
+for the download and extraction are needed the first time. Later launches
+work offline. Keep Start-Frame.cmd and Setup-Media-and-Start.ps1 beside Frame.exe.
+
+If you already have the media tools beside Frame.exe or on PATH, you can
+launch Frame.exe directly. Start-Frame.cmd also finds existing tools.
+If automatic setup fails, its window explains the problem; no system-wide
+settings are changed. You can put ffmpeg.exe, ffprobe.exe and ffplay.exe
+beside Frame.exe and retry. Do not launch the app from inside the ZIP.
+
+TRY IT
+Open a .frame project from Templates to try explanation graphics.
+Use the project menu > New project for video resolution/fps templates.
+Import footage, then double-click it or drag it onto the timeline.
+Use Save .frame to save your timeline, graphics, keyframes and media links.
+Original footage is linked rather than embedded: keep its files available.
+
+This is an unsigned, cross-compiled Windows x64 application. Windows
+runtime and first-run downloader testing remain outstanding. The download
+from Gyan could not be exercised from the build environment's network.
+Read README.md for the implemented editor features and current limits.

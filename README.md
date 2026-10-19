@@ -6,6 +6,19 @@ Frame is now a compiled **Rust desktop application**. It uses **egui/eframe** fo
 
 The previous Electron implementation is preserved in Git history at `2a3d1b4`. The current source replaces it rather than wrapping it.
 
+## Download the Windows app
+
+**[Download Frame for Windows (.zip)](https://github.com/SrijanCherupally/Frame/raw/refs/heads/main/downloads/Frame-Windows-x64.zip)**
+
+1. Download the ZIP and choose **Extract All**.
+2. Open the extracted folder and double-click **Start-Frame.cmd**.
+
+That's it. No Rust, compiler, npm, or administrator setup is required. On the first launch, the launcher downloads FFmpeg from Gyan's Windows build site, verifies its published SHA-256 checksum, and places it inside the app folder. Keep the setup window open until Frame opens. Subsequent launches work offline. The first launch needs internet access and space for the media-tool download and extraction.
+
+**[Download only Frame.exe](https://github.com/SrijanCherupally/Frame/raw/refs/heads/main/downloads/Frame.exe)** is also available if you already have FFmpeg/FFprobe installed. The ZIP is recommended for the easier first-run setup. Windows x64; unsigned, cross-compiled build. The Windows launcher and runtime still need testing on Windows. [Download checksums](downloads/SHA256SUMS.txt).
+
+The instructions below are for building Frame from source; you can skip them when using the download.
+
 ## Build and run
 
 Install [Rust](https://rustup.rs/), a system C linker, and FFmpeg 7 or later. `rust-toolchain.toml` pins the compiler; Cargo downloads verified dependency versions from `Cargo.lock`.
@@ -38,7 +51,7 @@ Building on Windows produces `target/release/frame.exe`. For a portable app fold
 .\scripts\package-windows.ps1
 ```
 
-That package expects FFmpeg on PATH. To bundle your Windows media binaries, supply their directory and the license/corresponding-source materials for that FFmpeg build:
+That package includes the first-run launcher, which downloads missing media tools into the app folder. You can also run Frame.exe directly when FFmpeg is on PATH. To bundle your Windows media binaries, supply their directory and the license/corresponding-source materials for that FFmpeg build:
 
 ```powershell
 .\scripts\package-windows.ps1 `

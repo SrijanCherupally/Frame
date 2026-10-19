@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', '.github/workflows/windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', 'scripts/**', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', '.github/workflows/windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', 'scripts/**', '.github/workflows/windows.yml']
 permissions:
   contents: read
 jobs:
@@ -22,7 +22,14 @@ jobs:
         run: cargo test --locked --lib --test editing --test documents
       - name: Build native application
         run: cargo build --locked --release
-      - name: Upload executable (FFmpeg installed separately)
+      - name: Validate portable launcher syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'scripts/portable/Setup-Media-and-Start.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+      - name: Upload executable and launcher
         uses: actions/upload-artifact@v4
         with:
           name: Frame-Windows-x64
@@ -32,3 +39,4 @@ jobs:
             THIRD-PARTY-LICENSES.txt
             assets/fonts/LICENSE-DejaVu.txt
             examples/projects/*.frame
+            scripts/portable/*
