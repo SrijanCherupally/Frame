@@ -1,4 +1,6 @@
+mod theme;
 mod tools;
+use theme::*;
 
 use crate::{
     document::{Document, Workspace},
@@ -25,20 +27,6 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-
-const GREEN: Color32 = Color32::from_rgb(198, 233, 157);
-
-const MUTED: Color32 = Color32::from_rgb(130, 141, 145);
-
-const PANEL: Color32 = Color32::from_rgb(23, 26, 29);
-
-const TRACK_COLORS: [Color32; 5] = [
-    Color32::from_rgb(175, 145, 204),
-    Color32::from_rgb(122, 178, 155),
-    Color32::from_rgb(111, 158, 191),
-    Color32::from_rgb(211, 163, 113),
-    Color32::from_rgb(159, 145, 194),
-];
 
 enum Event {
     Asset(Asset),
@@ -69,6 +57,14 @@ enum PropertyTab {
     Properties,
     Audio,
     Color,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum WorkMode {
+    Edit,
+    Color,
+    Audio,
+    Motion,
 }
 
 struct Drag {
@@ -109,6 +105,10 @@ pub struct FrameApp {
     saved: String,
     export_window: bool,
     settings_window: bool,
+    theme_window: bool,
+    workspace: WorkMode,
+    theme: Theme,
+    applied_theme: Option<Theme>,
     template_window: bool,
     template_new: bool,
     help_window: bool,
@@ -235,6 +235,11 @@ impl FrameApp {
             }
         }
 
+        let theme = std::fs::read(storage.root.join("preferences.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Preferences>(&bytes).ok())
+            .unwrap_or_default()
+            .theme;
         Ok(Self {
             project,
             assets: Arc::new(assets),
@@ -267,6 +272,10 @@ impl FrameApp {
             saved: "All changes saved".into(),
             export_window: false,
             settings_window: false,
+            theme_window: false,
+            workspace: WorkMode::Edit,
+            theme,
+            applied_theme: None,
             template_window: false,
             template_new: false,
             help_window: false,
@@ -282,39 +291,52 @@ impl FrameApp {
     pub fn configure(ctx: &egui::Context) {
         let mut style = (*ctx.style()).clone();
 
-        style.visuals = egui::Visuals::dark();
+        style.visuals = if palette().light {
+            egui::Visuals::light()
+        } else {
+            egui::Visuals::dark()
+        };
 
-        style.visuals.panel_fill = PANEL;
-
-        style.visuals.window_fill = Color32::from_rgb(27, 31, 36);
-        style.visuals.window_corner_radius = egui::CornerRadius::same(12);
-        for widget in [
-            &mut style.visuals.widgets.inactive,
-            &mut style.visuals.widgets.hovered,
-            &mut style.visuals.widgets.active,
+        style.visuals.panel_fill = palette().panel;
+        style.visuals.window_fill = palette().panel;
+        style.visuals.override_text_color = Some(palette().text);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(14);
+        style.visuals.window_stroke = Stroke::new(1.0_f32, palette().border);
+        style.visuals.window_shadow = egui::epaint::Shadow {
+            offset: [0, 12],
+            blur: 32,
+            spread: 2,
+            color: Color32::from_black_alpha(100),
+        };
+        style.visuals.extreme_bg_color = palette().canvas;
+        style.visuals.faint_bg_color = palette().card;
+        style.visuals.selection.bg_fill = mix(palette().card, palette().accent, 0.35);
+        style.visuals.selection.stroke = Stroke::new(1.0_f32, palette().text);
+        style.visuals.hyperlink_color = palette().cyan;
+        style.visuals.widgets.noninteractive.bg_stroke =
+            Stroke::new(1.0_f32, palette().border.gamma_multiply(0.65));
+        style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, palette().muted);
+        for (widget, color) in [
+            (&mut style.visuals.widgets.inactive, palette().control),
+            (
+                &mut style.visuals.widgets.hovered,
+                mix(palette().control, palette().accent, 0.22),
+            ),
+            (
+                &mut style.visuals.widgets.active,
+                mix(palette().control, palette().accent, 0.4),
+            ),
+            (
+                &mut style.visuals.widgets.open,
+                mix(palette().control, palette().accent, 0.25),
+            ),
         ] {
             widget.corner_radius = egui::CornerRadius::same(7);
+            widget.bg_fill = color;
+            widget.weak_bg_fill = color;
+            widget.bg_stroke = Stroke::new(1.0_f32, palette().border);
+            widget.fg_stroke = Stroke::new(1.0_f32, palette().text);
         }
-        style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(34, 40, 46);
-        style.visuals.widgets.inactive.weak_bg_fill = Color32::from_rgb(34, 40, 46);
-        style.visuals.widgets.inactive.fg_stroke =
-            Stroke::new(1.0_f32, Color32::from_rgb(220, 225, 226));
-        style.visuals.widgets.hovered.weak_bg_fill = Color32::from_rgb(49, 62, 49);
-        style.visuals.widgets.inactive.bg_stroke =
-            Stroke::new(1.0_f32, Color32::from_rgb(48, 56, 61));
-        style.visuals.window_stroke = Stroke::new(1.0_f32, Color32::from_rgb(49, 58, 63));
-
-        style.visuals.extreme_bg_color = Color32::from_rgb(16, 19, 21);
-
-        style.visuals.faint_bg_color = Color32::from_rgb(32, 37, 38);
-
-        style.visuals.selection.bg_fill = Color32::from_rgb(64, 83, 48);
-
-        style.visuals.selection.stroke = Stroke::new(1.0_f32, GREEN);
-
-        style.visuals.widgets.active.bg_fill = Color32::from_rgb(71, 91, 55);
-
-        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(52, 62, 51);
 
         style.spacing.item_spacing = Vec2::new(9., 9.);
 
@@ -1008,7 +1030,8 @@ impl FrameApp {
 
     fn top(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top")
-            .exact_height(58.)
+            .exact_height(64.)
+            .frame(surface(palette().rail, 12))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(27., 26.), Sense::hover());
@@ -1020,13 +1043,13 @@ impl FrameApp {
                                 Vec2::new(*width, 6.),
                             ),
                             1.,
-                            GREEN,
+                            palette().accent,
                         );
                     }
 
                     ui.label(RichText::new("frame").size(26.).strong());
 
-                    ui.label(RichText::new("STUDIO").size(9.).color(GREEN));
+                    ui.label(RichText::new("STUDIO").size(9.).color(palette().accent));
 
                     ui.separator();
 
@@ -1076,15 +1099,15 @@ impl FrameApp {
                         }
                     });
 
-                    ui.label(RichText::new(&self.saved).small().color(MUTED));
+                    ui.label(RichText::new(&self.saved).small().color(palette().muted));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new("Export video  ↑").color(Color32::BLACK),
+                                    RichText::new("Export video  ↑").color(palette().on_accent()),
                                 )
-                                .fill(GREEN),
+                                .fill(palette().accent),
                             )
                             .clicked()
                         {
@@ -1111,6 +1134,13 @@ impl FrameApp {
                             self.template_new = false;
                             self.template_window = true;
                         }
+                        if ui
+                            .button("Theme")
+                            .on_hover_text("Choose an appearance theme")
+                            .clicked()
+                        {
+                            self.theme_window = true;
+                        }
                         if ui.button("Settings").clicked() {
                             self.settings_window = true;
                         }
@@ -1122,34 +1152,47 @@ impl FrameApp {
     fn library(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("rail")
             .exact_width(84.)
+            .frame(surface(palette().rail, 7))
             .resizable(false)
             .show(ctx, |ui| {
                 ui.style_mut().spacing.button_padding.x = 3.;
                 ui.add_space(12.);
 
-                for (tab, icon, name) in [
-                    (Tab::Media, "▣", "Media"),
-                    (Tab::Audio, "♫", "Audio"),
-                    (Tab::Text, "T", "Text"),
-                    (Tab::Graphics, "◇", "Graphics"),
-                    (Tab::Transitions, "▱", "Transitions"),
-                    (Tab::Motion, "↗", "Motion"),
-                    (Tab::Effects, "≋", "Effects"),
+                for (tab, icon, name, accent) in [
+                    (Tab::Media, "▣", "Media", palette().accent),
+                    (Tab::Audio, "♫", "Audio", palette().cyan),
+                    (Tab::Text, "T", "Text", palette().violet),
+                    (Tab::Graphics, "◇", "Graphics", palette().amber),
+                    (Tab::Transitions, "▱", "Transitions", palette().cyan),
+                    (Tab::Motion, "↗", "Motion", palette().violet),
+                    (Tab::Effects, "≋", "Effects", palette().coral),
                 ] {
                     let response = ui.add_sized(
                         [70., 62.],
                         egui::Button::new(
-                            RichText::new(format!("{icon}\n{name}"))
-                                .size(11.)
-                                .color(if self.tab == tab { GREEN } else { MUTED }),
+                            RichText::new(format!("{icon}\n{name}")).size(11.).color(
+                                if self.tab == tab {
+                                    accent
+                                } else {
+                                    palette().muted
+                                },
+                            ),
                         )
                         .fill(if self.tab == tab {
-                            Color32::from_rgb(36, 45, 33)
+                            mix(palette().rail, accent, 0.2)
                         } else {
-                            PANEL
-                        }),
+                            palette().rail
+                        })
+                        .stroke(Stroke::NONE),
                     );
 
+                    if self.tab == tab {
+                        let r = Rect::from_min_size(
+                            response.rect.left_top() + Vec2::new(1., 13.),
+                            Vec2::new(3., 36.),
+                        );
+                        ui.painter().rect_filled(r, 2., accent);
+                    }
                     if response.clicked() {
                         self.tab = tab;
                     }
@@ -1157,22 +1200,42 @@ impl FrameApp {
             });
 
         egui::SidePanel::left("library")
-            .default_width(250.)
+            .default_width(268.)
+            .frame(surface(palette().panel, 12))
             .min_width(190.)
             .max_width(370.)
             .show(ctx, |ui| {
+                ui.set_min_width(ui.available_width());
                 ui.add_space(15.);
 
                 ui.heading(match self.tab {
-                    Tab::Media => "Your media",
-                    Tab::Audio => "Audio library",
-                    Tab::Text => "Text & titles",
+                    Tab::Media => "Project media",
+                    Tab::Audio => "Audio bin",
+                    Tab::Text => "Titles & text",
                     Tab::Graphics => "Explanation graphics",
                     Tab::Transitions => "Transitions",
                     Tab::Effects => "Color & effects",
                     Tab::Motion => "Motion studio",
                 });
 
+                ui.label(
+                    RichText::new(match self.tab {
+                        Tab::Media | Tab::Audio => "COLLECT & ARRANGE",
+                        Tab::Text => "WORDS THAT LAND",
+                        Tab::Graphics => "EXPLAIN & ILLUSTRATE",
+                        Tab::Motion => "BRING IT TO LIFE",
+                        Tab::Transitions => "CONNECT YOUR SCENES",
+                        Tab::Effects => "THE FINISHING TOUCH",
+                    })
+                    .size(9.)
+                    .color(match self.tab {
+                        Tab::Audio => palette().cyan,
+                        Tab::Text | Tab::Motion => palette().violet,
+                        Tab::Graphics => palette().amber,
+                        Tab::Effects => palette().coral,
+                        _ => palette().accent,
+                    }),
+                );
                 ui.add_space(13.);
 
                 if matches!(self.tab, Tab::Media | Tab::Audio) {
@@ -1180,9 +1243,9 @@ impl FrameApp {
                         .add_sized(
                             [ui.available_width(), 34.],
                             egui::Button::new(
-                                RichText::new("+  Import media").color(Color32::BLACK),
+                                RichText::new("+  Import media").color(palette().on_accent()),
                             )
-                            .fill(GREEN),
+                            .fill(palette().cyan),
                         )
                         .clicked()
                     {
@@ -1210,7 +1273,7 @@ impl FrameApp {
                     ui.label(
                         RichText::new(format!("PROJECT MEDIA   /   {} files", assets.len()))
                             .small()
-                            .color(MUTED),
+                            .color(palette().muted),
                     );
 
                     ui.add_space(5.);
@@ -1221,138 +1284,156 @@ impl FrameApp {
 
                     egui::ScrollArea::vertical()
                         .id_salt("media_scroll")
-                        .show_rows(ui, 130., rows, |ui, range| {
+                        .show_rows(ui, 164., rows, |ui, range| {
                             for row in range {
                                 ui.horizontal_top(|ui| {
                                     let width = (ui.available_width() - 10.) / 2.;
 
                                     for col in 0..cols {
                                         if let Some(a) = assets.get(row * cols + col) {
-                                            ui.vertical(|ui| {
-                                                ui.set_width(width);
+                                            card().inner_margin(6.).show(ui, |ui| {
+                                                ui.vertical(|ui| {
+                                                    let width = (width - 12.).max(40.);
+                                                    ui.set_width(width);
 
-                                                let (rect, response) = ui.allocate_exact_size(
-                                                    Vec2::new(width, 76.),
-                                                    Sense::click_and_drag(),
-                                                );
-
-                                                let texture = self.thumbnail(ctx, &a.id);
-
-                                                if let Some(texture) = texture {
-                                                    ui.painter().image(
-                                                        texture.id(),
-                                                        rect,
-                                                        Rect::from_min_max(
-                                                            Pos2::ZERO,
-                                                            Pos2::new(1., 1.),
-                                                        ),
-                                                        Color32::WHITE,
+                                                    let (rect, response) = ui.allocate_exact_size(
+                                                        Vec2::new(width, 76.),
+                                                        Sense::click_and_drag(),
                                                     );
-                                                } else {
-                                                    ui.painter().rect_filled(
+
+                                                    let texture = self.thumbnail(ctx, &a.id);
+
+                                                    if let Some(texture) = texture {
+                                                        ui.painter().image(
+                                                            texture.id(),
+                                                            rect,
+                                                            Rect::from_min_max(
+                                                                Pos2::ZERO,
+                                                                Pos2::new(1., 1.),
+                                                            ),
+                                                            Color32::WHITE,
+                                                        );
+                                                    } else {
+                                                        ui.painter().rect_filled(
+                                                            rect,
+                                                            5.,
+                                                            palette().card,
+                                                        );
+
+                                                        ui.painter().text(
+                                                            rect.center(),
+                                                            egui::Align2::CENTER_CENTER,
+                                                            if a.kind == Kind::Audio {
+                                                                "♫"
+                                                            } else {
+                                                                "…"
+                                                            },
+                                                            egui::FontId::proportional(26.),
+                                                            palette().accent,
+                                                        );
+                                                    }
+
+                                                    ui.painter().rect_stroke(
                                                         rect,
-                                                        5.,
-                                                        Color32::from_rgb(44, 51, 49),
+                                                        6.,
+                                                        Stroke::new(
+                                                            1.0_f32,
+                                                            if response.hovered() {
+                                                                palette().cyan
+                                                            } else {
+                                                                palette().border
+                                                            },
+                                                        ),
+                                                        StrokeKind::Inside,
+                                                    );
+                                                    if response.double_clicked() {
+                                                        self.add_asset(&a.id, None, None);
+                                                    }
+
+                                                    if response.drag_started() {
+                                                        response.dnd_set_drag_payload(a.id.clone());
+                                                    }
+
+                                                    let add = Rect::from_min_size(
+                                                        rect.right_top() - Vec2::new(25., -4.),
+                                                        Vec2::splat(21.),
+                                                    );
+
+                                                    ui.painter().rect_filled(
+                                                        add,
+                                                        3.,
+                                                        mix(palette().card, palette().cyan, 0.25),
                                                     );
 
                                                     ui.painter().text(
-                                                        rect.center(),
+                                                        add.center(),
                                                         egui::Align2::CENTER_CENTER,
-                                                        if a.kind == Kind::Audio {
-                                                            "♫"
-                                                        } else {
-                                                            "…"
-                                                        },
-                                                        egui::FontId::proportional(26.),
-                                                        GREEN,
+                                                        "+",
+                                                        egui::FontId::proportional(14.),
+                                                        palette().accent,
                                                     );
-                                                }
 
-                                                if response.double_clicked() {
-                                                    self.add_asset(&a.id, None, None);
-                                                }
-
-                                                if response.drag_started() {
-                                                    response.dnd_set_drag_payload(a.id.clone());
-                                                }
-
-                                                let add = Rect::from_min_size(
-                                                    rect.right_top() - Vec2::new(25., -4.),
-                                                    Vec2::splat(21.),
-                                                );
-
-                                                ui.painter().rect_filled(
-                                                    add,
-                                                    3.,
-                                                    Color32::from_rgb(49, 64, 42),
-                                                );
-
-                                                ui.painter().text(
-                                                    add.center(),
-                                                    egui::Align2::CENTER_CENTER,
-                                                    "+",
-                                                    egui::FontId::proportional(14.),
-                                                    GREEN,
-                                                );
-
-                                                if ui
-                                                    .interact(
-                                                        add,
-                                                        ui.id().with((&a.id, "add")),
-                                                        Sense::click(),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    self.add_asset(&a.id, None, None);
-                                                }
-
-                                                ui.add(
-                                                    egui::Label::new(
-                                                        RichText::new(&a.name).size(10.),
-                                                    )
-                                                    .truncate(),
-                                                )
-                                                .on_hover_text(&a.name);
-
-                                                ui.label(
-                                                    RichText::new(if a.demo {
-                                                        "Sample illustration".into()
-                                                    } else if a.status == "ready" {
-                                                        format!(
-                                                            "{} · {}",
-                                                            if a.kind == Kind::Audio {
-                                                                "Audio"
-                                                            } else {
-                                                                "Linked original"
-                                                            },
-                                                            format_bytes(a.size)
-                                                        )
-                                                    } else {
-                                                        a.status.clone()
-                                                    })
-                                                    .size(9.)
-                                                    .color(if a.status == "error" {
-                                                        Color32::LIGHT_RED
-                                                    } else {
-                                                        MUTED
-                                                    }),
-                                                );
-
-                                                if a.error.is_some() {
                                                     if ui
-                                                        .small_button("Retry / relink")
-                                                        .on_hover_text(
-                                                            a.error.as_deref().unwrap_or(""),
+                                                        .interact(
+                                                            add,
+                                                            ui.id().with((&a.id, "add")),
+                                                            Sense::click(),
                                                         )
                                                         .clicked()
                                                     {
+                                                        self.add_asset(&a.id, None, None);
+                                                    }
+
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            RichText::new(&a.name).size(10.),
+                                                        )
+                                                        .truncate(),
+                                                    )
+                                                    .on_hover_text(&a.name);
+
+                                                    ui.label(
+                                                        RichText::new(if a.demo {
+                                                            "Sample illustration".into()
+                                                        } else if a.status == "ready" {
+                                                            format!(
+                                                                "{} · {}",
+                                                                if a.kind == Kind::Audio {
+                                                                    "Audio"
+                                                                } else {
+                                                                    "Linked original"
+                                                                },
+                                                                format_bytes(a.size)
+                                                            )
+                                                        } else {
+                                                            a.status.clone()
+                                                        })
+                                                        .size(9.)
+                                                        .color(if a.status == "error" {
+                                                            Color32::LIGHT_RED
+                                                        } else {
+                                                            palette().muted
+                                                        }),
+                                                    );
+
+                                                    if a.error.is_some() {
+                                                        if ui
+                                                            .small_button("Retry / relink")
+                                                            .on_hover_text(
+                                                                a.error.as_deref().unwrap_or(""),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            self.import_picker(Some(a.id.clone()));
+                                                        }
+                                                    } else if !a.demo
+                                                        && ui
+                                                            .small_button("Relink original")
+                                                            .clicked()
+                                                    {
                                                         self.import_picker(Some(a.id.clone()));
                                                     }
-                                                } else if !a.demo
-                                                    && ui.small_button("Relink original").clicked()
-                                                {
-                                                    self.import_picker(Some(a.id.clone()));
-                                                }
+                                                });
                                             });
                                         }
                                     }
@@ -1365,7 +1446,7 @@ impl FrameApp {
                             ui.label(
                                 RichText::new("A few words. A whole new story.")
                                     .small()
-                                    .color(MUTED),
+                                    .color(palette().muted),
                             );
 
                             for (name, text, size) in [
@@ -1381,7 +1462,7 @@ impl FrameApp {
                                         [ui.available_width(), 75.],
                                         egui::Button::new(
                                             RichText::new(format!("{text}\n\n+ {name}"))
-                                                .color(Color32::from_rgb(215, 227, 209))
+                                                .color(palette().text)
                                                 .size(14.),
                                         ),
                                     )
@@ -1399,7 +1480,7 @@ impl FrameApp {
                             ui.label(
                                 RichText::new("Select a clip, then choose its entrance.")
                                     .small()
-                                    .color(MUTED),
+                                    .color(palette().muted),
                             );
 
                             for (t, label) in [
@@ -1435,7 +1516,7 @@ impl FrameApp {
                             ui.label(
                                 RichText::new("Find the feeling of your film.")
                                     .small()
-                                    .color(MUTED),
+                                    .color(palette().muted),
                             );
 
                             for (name, b, ct, s, w) in [
@@ -1504,25 +1585,25 @@ impl FrameApp {
 
     fn viewer(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(15, 18, 20))
-                    .inner_margin(18.),
-            )
+            .frame(egui::Frame::new().fill(palette().canvas).inner_margin(18.))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("●").color(GREEN).size(9.));
+                    ui.label(RichText::new("●").color(palette().accent).size(9.));
 
-                    ui.label("Preview");
+                    ui.label(RichText::new("Program monitor").strong());
 
                     ui.label(
                         RichText::new(format!("{} × {}", self.project.width, self.project.height))
                             .small()
-                            .color(MUTED),
+                            .color(palette().muted),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new("DRAFT PREVIEW").size(9.).color(MUTED));
+                        ui.label(
+                            RichText::new("DRAFT PREVIEW")
+                                .size(9.)
+                                .color(palette().muted),
+                        );
                     });
                 });
 
@@ -1560,14 +1641,14 @@ impl FrameApp {
                             "Your story starts here"
                         },
                         egui::FontId::proportional(15.),
-                        MUTED,
+                        palette().muted,
                     );
                 }
 
                 ui.painter().rect_stroke(
                     rect,
                     4.,
-                    Stroke::new(1.0_f32, Color32::from_rgb(56, 65, 64)),
+                    Stroke::new(1.0_f32, palette().border),
                     StrokeKind::Inside,
                 );
 
@@ -1601,7 +1682,7 @@ impl FrameApp {
                             timecode(self.project.duration(), self.project.fps)
                         ))
                         .small()
-                        .color(MUTED),
+                        .color(palette().muted),
                     );
 
                     ui.add_space((ui.available_width() / 2. - 160.).max(0.));
@@ -1618,9 +1699,9 @@ impl FrameApp {
                         .add(
                             egui::Button::new(
                                 RichText::new(if self.playing { "Ⅱ" } else { "▶" })
-                                    .color(Color32::BLACK),
+                                    .color(palette().on_accent()),
                             )
-                            .fill(GREEN)
+                            .fill(palette().accent)
                             .min_size(Vec2::new(38., 30.)),
                         )
                         .clicked()
@@ -1643,14 +1724,14 @@ impl FrameApp {
                     ui.label(
                         RichText::new("■  Originals preserved")
                             .small()
-                            .color(Color32::from_rgb(124, 151, 108)),
+                            .color(palette().success),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new("A little closer to your next great story.")
                                 .small()
-                                .color(MUTED),
+                                .color(palette().muted),
                         );
                     });
                 });
@@ -1658,19 +1739,24 @@ impl FrameApp {
     }
 
     fn inspector(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::right("inspector").default_width(265.).min_width(230.).max_width(370.).show(ctx,|ui|{
+        egui::SidePanel::right("inspector").default_width(300.).min_width(260.).max_width(390.).frame(surface(palette().panel,12)).show(ctx,|ui|{
 
+  ui.label(RichText::new(match self.workspace {WorkMode::Edit=>"EFFECT CONTROLS",WorkMode::Color=>"COLOR",WorkMode::Audio=>"AUDIO CONTROLS",WorkMode::Motion=>"MOTION CONTROLS"}).size(10.).color(palette().muted));
+  ui.add_space(6.);
+  let props_label=RichText::new("Properties").color(if self.property_tab==PropertyTab::Properties{palette().text}else{palette().accent});
+  let audio_label=RichText::new("Audio").color(if self.property_tab==PropertyTab::Audio{palette().text}else{palette().cyan});
+  let color_label=RichText::new("Color").color(if self.property_tab==PropertyTab::Color{palette().text}else{palette().amber});
   ui.horizontal(|ui|{
-ui.selectable_value(&mut self.property_tab,PropertyTab::Properties,"Properties");
-ui.selectable_value(&mut self.property_tab,PropertyTab::Audio,"Audio");
-ui.selectable_value(&mut self.property_tab,PropertyTab::Color,"Color");
+ui.selectable_value(&mut self.property_tab,PropertyTab::Properties,props_label);
+ui.selectable_value(&mut self.property_tab,PropertyTab::Audio,audio_label);
+ui.selectable_value(&mut self.property_tab,PropertyTab::Color,color_label);
 }
 );
 ui.separator();
 
   let Some(index)=self.selected_index()else{
 ui.add_space(40.);
-ui.label(RichText::new("Make it yours").size(18.).color(GREEN));
+ui.label(RichText::new("Make it yours").size(18.).color(palette().accent));
 ui.label("Select a timeline clip to adjust its properties.");
 return;
 }
@@ -1689,7 +1775,7 @@ let mut c=old.clone();
 
   ui.add_space(8.);
 ui.label(RichText::new(&c.name).strong());
-ui.label(RichText::new(format!("{:?} LAYER",c.kind).to_uppercase()).size(9.).color(MUTED));
+ui.label(RichText::new(format!("{:?} LAYER",c.kind).to_uppercase()).size(9.).color(palette().muted));
 ui.separator();
 
   egui::ScrollArea::vertical().show(ui,|ui|{
@@ -1698,7 +1784,9 @@ match self.property_tab {
    PropertyTab::Properties=>{
 
     if matches!(c.kind,Kind::Title|Kind::Graphic){
-ui.label(RichText::new("Text & appearance").strong());
+card().show(ui,|ui|{
+ui.set_min_width(ui.available_width());
+section_title(ui,"Text & appearance",palette().amber);
 if ui.add(egui::TextEdit::multiline(&mut c.text).char_limit(3000).desired_rows(3).desired_width(ui.available_width())).changed(){
 c.name=c.text.lines().next().unwrap_or("Text").chars().take(70).collect();
 }
@@ -1716,12 +1804,15 @@ ui.add(egui::DragValue::new(&mut c.font_size).range(12..=200).suffix(" px"));
 }
 );
 self.appearance_controls(ui, &mut c);
-ui.separator();
+});
+ui.add_space(10.);
 }
 
     if c.is_visual(){
+card().show(ui,|ui|{
+ui.set_min_width(ui.available_width());
 ui.horizontal(|ui|{
-ui.label(RichText::new("Transform").strong());
+section_title(ui,"Transform",palette().accent);
 if ui.small_button("Reset").clicked(){
 c.transform=Transform::default();
 c.keyframes.clear();
@@ -1753,10 +1844,13 @@ k.transform=trans;
 }
 }
 }
-ui.separator();
+});
+ui.add_space(10.);
 }
 
-    ui.label(RichText::new("Timing").strong());
+    card().show(ui,|ui|{
+ui.set_min_width(ui.available_width());
+section_title(ui,"Timing",palette().cyan);
 egui::ComboBox::from_id_salt("clip_track").selected_text(TRACKS[c.track]).show_ui(ui,|ui|{
 for(i,name)in TRACKS.iter().enumerate(){
 ui.selectable_value(&mut c.track,i,*name);
@@ -1802,7 +1896,7 @@ self.notify(e.to_string());
 }
 }
 );
-ui.label(RichText::new("4 hours → 20 seconds = 720×").small().color(GREEN));
+ui.label(RichText::new("4 hours → 20 seconds = 720×").small().color(palette().accent));
 
     }
 else{
@@ -1813,10 +1907,13 @@ ui.add(egui::DragValue::new(&mut c.duration).range((1./self.project.fps as f64).
 );
 }
 
-    ui.separator();
+    });
+ui.add_space(10.);
 if c.is_visual(){
+card().show(ui,|ui|{
+ui.set_min_width(ui.available_width());
 ui.horizontal(|ui|{
-ui.label(RichText::new("Animation").strong());
+section_title(ui,"Animation",palette().violet);
 if ui.small_button("+ Keyframe").clicked()&&c.keyframes.len()<200{
 edit::add_keyframe(&mut c,(self.time-old.start).clamp(0.,old.duration),self.project.fps);
 }
@@ -1824,7 +1921,7 @@ edit::add_keyframe(&mut c,(self.time-old.start).clamp(0.,old.duration),self.proj
 );
 if ui.button("Browse motion presets →").clicked(){self.tab=Tab::Motion;}
 if !c.keyframes.is_empty() && ui.small_button("Clear animation").clicked(){c.transform=c.value((self.time-c.start).clamp(0.,c.duration));c.keyframes.clear();}
-ui.label(RichText::new("Add a keyframe, move the playhead, then change the transform.").small().color(MUTED));
+ui.label(RichText::new("Add a keyframe, move the playhead, then change the transform.").small().color(palette().muted));
 let mut remove=None;
 egui::ScrollArea::vertical().id_salt("keyframe_list").max_height(130.).show(ui,|ui|{
 for(i,k)in c.keyframes.iter().enumerate(){
@@ -1846,11 +1943,12 @@ c.keyframes.remove(i);
 }
 
 if c.keyframes.is_empty(){
-ui.label(RichText::new("No keyframes yet").small().color(MUTED));
+ui.label(RichText::new("No keyframes yet").small().color(palette().muted));
 }
-ui.separator();
+});
+ui.add_space(12.);
 
-     ui.label(RichText::new("Mask & transition").strong());
+     section_title(ui,"Mask & transition",palette().amber);
 egui::ComboBox::from_id_salt("mask").selected_text(format!("{:?}",c.mask)).show_ui(ui,|ui|{
 for v in [Mask::None,Mask::Circle,Mask::Rectangle]{
 ui.selectable_value(&mut c.mask,v,format!("{v:?}"));
@@ -1873,7 +1971,9 @@ ui.add(egui::Slider::new(&mut c.fade_duration,0.05..=5.).text("Length").suffix("
    }
 ,
    PropertyTab::Audio=>{
-ui.label(RichText::new("Audio mix").strong());
+card().show(ui,|ui|{
+ui.set_min_width(ui.available_width());
+section_title(ui,"Audio mix",palette().cyan);
 if matches!(c.kind,Kind::Video|Kind::Audio){
 ui.add(egui::Slider::new(&mut c.volume,0.0..=2.0).text("Volume").suffix("×"));
 if ui.button(if c.volume==0.{
@@ -1887,16 +1987,19 @@ else{
 0.}
 ;
 }
-ui.label(RichText::new("Pitch-preserved retiming and fades apply in both preview and export. Native audio preview requires FFplay and an available audio device.").small().color(MUTED));
+ui.label(RichText::new("Pitch-preserved retiming and fades apply in both preview and export. Native audio preview requires FFplay and an available audio device.").small().color(palette().muted));
 }
 else{
 ui.label("This layer has no audio. Select a video or audio clip.");
 }
+});
 }
 ,
    PropertyTab::Color=>{
+card().show(ui,|ui|{
+ui.set_min_width(ui.available_width());
 ui.horizontal(|ui|{
-ui.label(RichText::new("Color adjustments").strong());
+section_title(ui,"Color adjustments",palette().amber);
 if ui.small_button("Reset").clicked(){
 c.brightness=0.;
 c.contrast=1.;
@@ -1914,8 +2017,8 @@ ui.add(egui::Slider::new(&mut c.blur,0.0..=20.0).text("Softness"));
 
     if c.kind==Kind::Video{
 ui.add_space(15.);
-egui::Frame::new().fill(Color32::from_rgb(37,49,33)).inner_margin(12.).corner_radius(6.).show(ui,|ui|{
-ui.label(RichText::new("✦ Clean Timelapse").color(GREEN).strong());
+egui::Frame::new().fill(mix(palette().card,palette().cyan,0.12)).inner_margin(12.).corner_radius(6.).show(ui,|ui|{
+ui.label(RichText::new("✦ Clean Timelapse").color(palette().accent).strong());
 ui.label(RichText::new("Blend the motion. Keep the detail.").small());
 ui.horizontal(|ui|{
 for speed in [8.,32.,720.]{
@@ -1930,11 +2033,12 @@ c.volume=0.;
 ui.checkbox(&mut c.motion_blur,"Motion blending");
 ui.add(egui::Slider::new(&mut c.shutter,0.1..=1.0).text("Strength"));
 ui.checkbox(&mut c.deflicker,"Reduce exposure flicker");
-ui.label(RichText::new("Up to 16 source samples per exposure window. Temporal effects apply on export.").small().color(MUTED));
+ui.label(RichText::new("Up to 16 source samples per exposure window. Temporal effects apply on export.").small().color(palette().muted));
 }
 );
 }
 
+   });
    }
 
   }
@@ -1962,6 +2066,7 @@ self.property_drag=false;
     fn timeline(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("timeline")
             .default_height(322.)
+            .frame(surface(palette().rail, 10))
             .min_height(280.)
             .max_height(480.)
             .resizable(true)
@@ -1987,6 +2092,13 @@ self.property_drag=false;
                         self.modified();
                     }
 
+                    ui.separator();
+                    ui.label(
+                        RichText::new("TIMELINE")
+                            .size(10.)
+                            .color(palette().text)
+                            .strong(),
+                    );
                     ui.separator();
 
                     if ui
@@ -2031,7 +2143,11 @@ self.property_drag=false;
                                 .max_decimals(2),
                         );
 
-                        ui.label(RichText::new("Timeline zoom").small().color(MUTED));
+                        ui.label(
+                            RichText::new("Timeline zoom")
+                                .small()
+                                .color(palette().muted),
+                        );
                     });
                 });
 
@@ -2050,14 +2166,14 @@ self.property_drag=false;
                             egui::Label::new(
                                 RichText::new(format!("{} FPS  /  TRACKS", self.project.fps))
                                     .small()
-                                    .color(MUTED),
+                                    .color(palette().muted),
                             ),
                         );
 
                         for (track, name) in TRACKS.iter().enumerate() {
                             ui.allocate_ui(Vec2::new(155., row - 9.), |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("▏").color(TRACK_COLORS[track]));
+                                    ui.label(RichText::new("▏").color(palette().tracks()[track]));
 
                                     ui.label(RichText::new(*name).size(10.));
 
@@ -2114,6 +2230,25 @@ self.property_drag=false;
                             let painter = ui.painter_at(rect);
 
                             let origin = rect.min;
+                            painter.rect_filled(
+                                Rect::from_min_size(origin, Vec2::new(width, ruler)),
+                                0.,
+                                palette().panel,
+                            );
+                            for (track, color) in palette().tracks().iter().enumerate() {
+                                painter.rect_filled(
+                                    Rect::from_min_size(
+                                        origin + Vec2::new(0., ruler + row * track as f32),
+                                        Vec2::new(width, row),
+                                    ),
+                                    0.,
+                                    mix(
+                                        palette().canvas,
+                                        *color,
+                                        if track % 2 == 0 { 0.07 } else { 0.11 },
+                                    ),
+                                );
+                            }
 
                             let step = if self.zoom < 0.5 {
                                 600.
@@ -2140,7 +2275,10 @@ self.property_drag=false;
                                         Pos2::new(x, origin.y + ruler - 5.),
                                         Pos2::new(x, origin.y + height),
                                     ],
-                                    Stroke::new(1.0_f32, Color32::from_rgb(36, 42, 45)),
+                                    Stroke::new(
+                                        1.0_f32,
+                                        mix(palette().canvas, palette().border, 0.35),
+                                    ),
                                 );
 
                                 painter.text(
@@ -2148,7 +2286,7 @@ self.property_drag=false;
                                     egui::Align2::LEFT_TOP,
                                     timecode(i as f64 * step as f64, self.project.fps),
                                     egui::FontId::monospace(9.),
-                                    MUTED,
+                                    palette().muted,
                                 );
                             }
 
@@ -2158,7 +2296,10 @@ self.property_drag=false;
                                         origin + Vec2::new(0., ruler + row * track as f32),
                                         origin + Vec2::new(width, ruler + row * track as f32),
                                     ],
-                                    Stroke::new(1.0_f32, Color32::from_rgb(42, 46, 49)),
+                                    Stroke::new(
+                                        1.0_f32,
+                                        mix(palette().canvas, palette().border, 0.5),
+                                    ),
                                 );
                             }
 
@@ -2213,7 +2354,7 @@ self.property_drag=false;
 
                                 let selected = self.selected.as_deref() == Some(&c.id);
 
-                                let mut color = TRACK_COLORS[c.track];
+                                let mut color = palette().tracks()[c.track];
 
                                 if self.project.hidden_tracks.contains(&c.track)
                                     || self.project.muted_tracks.contains(&c.track)
@@ -2221,7 +2362,21 @@ self.property_drag=false;
                                     color = color.gamma_multiply(0.4);
                                 }
 
-                                painter.rect_filled(clip_rect, 4., color.gamma_multiply(0.28));
+                                painter.rect_filled(
+                                    clip_rect,
+                                    5.,
+                                    mix(palette().card, color, if selected { 0.38 } else { 0.23 }),
+                                );
+                                if clip_rect.height() > 8. {
+                                    painter.rect_filled(
+                                        Rect::from_min_size(
+                                            clip_rect.min + Vec2::new(2., 1.),
+                                            Vec2::new((clip_rect.width() - 4.).max(0.), 2.),
+                                        ),
+                                        1.,
+                                        color,
+                                    );
+                                }
 
                                 painter.rect_stroke(
                                     clip_rect,
@@ -2229,7 +2384,7 @@ self.property_drag=false;
                                     Stroke::new(
                                         if selected { 1.5_f32 } else { 1.0_f32 },
                                         if selected {
-                                            GREEN
+                                            palette().accent
                                         } else {
                                             color.gamma_multiply(0.7)
                                         },
@@ -2238,12 +2393,12 @@ self.property_drag=false;
                                 );
 
                                 if cw > 22. {
-                                    painter.with_clip_rect(clip_rect.shrink(3.)).text(
-                                        clip_rect.left_top() + Vec2::new(6., 5.),
-                                        egui::Align2::LEFT_TOP,
+                                    painter.with_clip_rect(clip_rect.shrink(2.)).text(
+                                        clip_rect.left_center() + Vec2::new(7., 0.),
+                                        egui::Align2::LEFT_CENTER,
                                         &c.name,
-                                        egui::FontId::proportional(9.),
-                                        color,
+                                        egui::FontId::proportional(10.),
+                                        palette().text,
                                     );
                                 }
 
@@ -2253,7 +2408,7 @@ self.property_drag=false;
                                     painter.circle_filled(
                                         Pos2::new(x, clip_rect.bottom() - 5.),
                                         2.,
-                                        GREEN,
+                                        palette().accent,
                                     );
                                 }
 
@@ -2267,7 +2422,7 @@ self.property_drag=false;
                                             clip_rect.left_bottom(),
                                             clip_rect.left_top() + Vec2::new(fade, 0.),
                                         ],
-                                        Stroke::new(1.0_f32, GREEN.gamma_multiply(0.5)),
+                                        Stroke::new(1.0_f32, palette().accent.gamma_multiply(0.5)),
                                     );
                                 }
 
@@ -2453,7 +2608,7 @@ self.property_drag=false;
                                     Pos2::new(px, origin.y + 8.),
                                     Pos2::new(px, origin.y + height),
                                 ],
-                                Stroke::new(1.0_f32, GREEN),
+                                Stroke::new(1.0_f32, palette().accent),
                             );
 
                             painter.rect_filled(
@@ -2462,7 +2617,7 @@ self.property_drag=false;
                                     Vec2::new(9., 10.),
                                 ),
                                 1.,
-                                GREEN,
+                                palette().accent,
                             );
 
                             let scrub = ui.interact(
@@ -2489,14 +2644,14 @@ self.property_drag=false;
                             timecode(self.project.duration(), self.project.fps)
                         ))
                         .small()
-                        .color(MUTED),
+                        .color(palette().muted),
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
                             RichText::new("Space  Play / pause    S  Split    ← →  Frame by frame")
                                 .small()
-                                .color(MUTED),
+                                .color(palette().muted),
                         );
                     });
                 });
@@ -2507,10 +2662,10 @@ self.property_drag=false;
         let mut open = self.export_window;
 
         egui::Window::new("Let your story take flight").open(&mut open).collapsible(false).resizable(false).default_width(410.).show(ctx,|ui|{
-ui.label(RichText::new("READY FOR LIFTOFF").small().color(GREEN));
+ui.label(RichText::new("READY FOR LIFTOFF").small().color(palette().accent));
 ui.add_space(10.);
 ui.label("Render from your originals. MP4 · H.264 · AAC.");
-ui.label(RichText::new(format!("{}  /  {} fps  /  {} clips",timecode(self.project.duration(),self.project.fps),self.project.fps,self.project.clips.len())).small().color(MUTED));
+ui.label(RichText::new(format!("{}  /  {} fps  /  {} clips",timecode(self.project.duration(),self.project.fps),self.project.fps,self.project.clips.len())).small().color(palette().muted));
 ui.add_space(10.);
 egui::ComboBox::from_id_salt("export_size").selected_text(format!("{} × {}",self.export_size[0],self.export_size[1])).show_ui(ui,|ui|{
 for(size,label)in[([640,360],"360p · Fast test"),([1280,720],"720p"),([1920,1080],"1080p"),([3840,2160],"4K UHD"),([1080,1920],"Vertical / Shorts"),([1080,1080],"Square")]{
@@ -2524,7 +2679,7 @@ ui.add_space(12.);
 ui.label(RichText::new(&job.status).strong().color(if job.status=="Failed"{
 Color32::LIGHT_RED}
 else{
-GREEN}
+palette().accent}
 ));
 ui.add(egui::ProgressBar::new(job.progress as f32).show_percentage());
 if let Some(error)=&job.error{
@@ -2538,14 +2693,14 @@ ui.label(RichText::new(format!("Saved to {}",path.display())).small());
 
    let running=self.exports.as_ref().is_some_and(|(_,h)|!h.is_finished());
 ui.add_space(10.);
-if ui.add_enabled(!running,egui::Button::new(RichText::new("Export video…").color(Color32::BLACK)).fill(GREEN)).clicked(){
+if ui.add_enabled(!running,egui::Button::new(RichText::new("Export video…").color(palette().on_accent())).fill(palette().accent)).clicked(){
 self.export();
 }
 
 if running&&ui.button("Cancel export").clicked()&& let Some((group,_))=&self.exports{
 group.cancel();
 }
-ui.label(RichText::new("Choose a new filename. Existing videos are never overwritten. Keep Frame open until rendering finishes.").small().color(MUTED));
+ui.label(RichText::new("Choose a new filename. Existing videos are never overwritten. Keep Frame open until rendering finishes.").small().color(palette().muted));
 }
 );
 
@@ -2577,7 +2732,7 @@ ui.label(RichText::new("Choose a new filename. Existing videos are never overwri
                         self.storage.root.display()
                     ))
                     .small()
-                    .color(MUTED),
+                    .color(palette().muted),
                 );
 
                 if self.project != old {
@@ -2659,7 +2814,7 @@ ui.label(RichText::new("Choose a new filename. Existing videos are never overwri
                 ui.label(
                     RichText::new("Your work is preserved before switching projects.")
                         .small()
-                        .color(MUTED),
+                        .color(palette().muted),
                 );
 
                 egui::ScrollArea::vertical()
@@ -2690,13 +2845,13 @@ ui.heading("A little less clicking");
 for(action,key)in[("Play / pause","Space"),("Split selected clip","S"),("Previous / next frame","← / →"),("Jump 10 frames","Shift + ← / →"),("Delete clip","Delete"),("Undo / redo","Ctrl/Cmd Z / Shift Z"),("Save project","Ctrl/Cmd S")]{
 ui.horizontal(|ui|{
 ui.label(action);
-ui.label(RichText::new(key).monospace().color(GREEN));
+ui.label(RichText::new(key).monospace().color(palette().accent));
 }
 );
 }
 ui.separator();
 ui.label("Drag original files into the app to link them. Use + to add media to the timeline. Drag clip edges to trim. GPU draws the interface; FFmpeg processes video on CPU. Preview audio requires FFplay.");
-ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Optical flow, speed ramps, tracking, HDR and arbitrary masks are not implemented.").small().color(MUTED));
+ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Optical flow, speed ramps, tracking, HDR and arbitrary masks are not implemented.").small().color(palette().muted));
 }
 );
 
@@ -2707,12 +2862,12 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
                 .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0., -35.))
                 .show(ctx, |ui| {
                     egui::Frame::new()
-                        .fill(Color32::from_rgb(42, 55, 39))
-                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(83, 105, 68)))
+                        .fill(palette().card)
+                        .stroke(Stroke::new(1.0_f32, palette().accent))
                         .inner_margin(14.)
                         .corner_radius(7.)
                         .show(ui, |ui| {
-                            ui.label(RichText::new(text).color(Color32::from_rgb(220, 235, 207)));
+                            ui.label(RichText::new(text).color(palette().text));
                         });
                 });
         }
@@ -2745,11 +2900,17 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
     }
 
     pub fn draw(&mut self, ctx: &egui::Context) {
+        self.theme.activate();
+        if self.applied_theme != Some(self.theme) {
+            Self::configure(ctx);
+            self.applied_theme = Some(self.theme);
+        }
         self.poll(ctx);
 
         self.shortcuts(ctx);
 
         self.top(ctx);
+        self.workspace_bar(ctx);
 
         self.timeline(ctx);
 
@@ -2761,6 +2922,7 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
 
         self.dialogs(ctx);
         self.format_dialog(ctx);
+        self.theme_dialog(ctx);
     }
 }
 
@@ -3004,6 +3166,61 @@ mod tests {
         assert_eq!(app.zoom, 0.1);
         assert_eq!(app.selected.as_ref(), Some(&selected));
         assert!(!app.storage.snapshots().is_empty());
+    }
+
+    #[test]
+    fn themes_apply_immediately_preserve_edits_and_survive_restart() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("library");
+        {
+            let mut app = FrameApp::new(Storage::open(root.clone()).unwrap()).unwrap();
+            let project = app.project.clone();
+            let ctx = egui::Context::default();
+            FrameApp::configure(&ctx);
+            for theme in THEMES {
+                app.choose_theme(theme, &ctx);
+                let output = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+                    app.draw(ctx)
+                });
+                assert!(output.shapes.len() > 30);
+                assert_eq!(
+                    app.project, project,
+                    "Appearance must not modify footage, timeline or exports"
+                );
+                assert_eq!(ctx.style().visuals.dark_mode, !theme.colors().light);
+                assert_eq!(ctx.style().visuals.panel_fill, theme.colors().panel);
+            }
+            app.theme_window = true;
+            let output = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+                app.draw(ctx)
+            });
+            assert!(output.shapes.len() > 60);
+        }
+        let app = FrameApp::new(Storage::open(root).unwrap()).unwrap();
+        assert_eq!(app.theme, Theme::Dawn);
+    }
+
+    #[test]
+    fn workspace_modes_open_relevant_controls_without_changing_the_timeline() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut app = FrameApp::new(Storage::open(temp.path().into()).unwrap()).unwrap();
+        let original = app.project.clone();
+        let ctx = egui::Context::default();
+        FrameApp::configure(&ctx);
+        for (mode, tab, property) in [
+            (WorkMode::Edit, Tab::Media, PropertyTab::Properties),
+            (WorkMode::Color, Tab::Effects, PropertyTab::Color),
+            (WorkMode::Audio, Tab::Audio, PropertyTab::Audio),
+            (WorkMode::Motion, Tab::Motion, PropertyTab::Properties),
+        ] {
+            app.activate_workspace(mode);
+            assert!(app.tab == tab && app.property_tab == property);
+            let output = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+                app.draw(ctx)
+            });
+            assert!(output.shapes.len() > 30);
+            assert_eq!(app.project, original);
+        }
     }
 
     #[test]

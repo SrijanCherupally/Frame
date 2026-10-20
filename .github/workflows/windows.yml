@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', 'scripts/**', '.github/workflows/windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', 'scripts/**', 'downloads/**', '.github/workflows/windows.yml']
   pull_request:
-    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', 'scripts/**', '.github/workflows/windows.yml']
+    paths: ['src/**', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'assets/**', 'examples/**', 'tests/**', 'scripts/**', 'downloads/**', '.github/workflows/windows.yml']
 permissions:
   contents: read
 jobs:
@@ -18,25 +18,15 @@ jobs:
         run: rustup show
       - name: Check formatting
         run: cargo fmt --check
-      - name: Test native editing and recovery
-        run: cargo test --locked --lib --test editing --test documents
-      - name: Build native application
-        run: cargo build --locked --release
-      - name: Validate portable launcher syntax
+      - name: Test, build and package the complete offline application
         shell: pwsh
-        run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $pwd 'scripts/portable/Setup-Media-and-Start.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count) { throw ($errors | Out-String) }
-      - name: Upload executable and launcher
+        run: ./scripts/package-windows.ps1
+      - name: Exercise bundled Windows media tools and Frame discovery
+        shell: pwsh
+        run: ./scripts/test-windows-media.ps1 -PackageDir windows-package
+      - name: Upload offline Windows ZIP
         uses: actions/upload-artifact@v4
         with:
           name: Frame-Windows-x64
-          path: |
-            target/release/frame.exe
-            README.md
-            THIRD-PARTY-LICENSES.txt
-            assets/fonts/LICENSE-DejaVu.txt
-            examples/projects/*.frame
-            scripts/portable/*
+          path: windows-package.zip
+          if-no-files-found: error

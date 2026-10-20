@@ -1,8 +1,12 @@
 @echo off
 setlocal
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Setup-Media-and-Start.ps1"
-if errorlevel 1 (
-  echo.
-  echo Frame could not start. Read the message above, then try again.
-  pause
-)
+if not exist "%~dp0ffmpeg.exe" goto missing
+if not exist "%~dp0ffprobe.exe" goto missing
+if not exist "%~dp0ffplay.exe" goto missing
+start "" "%~dp0Frame.exe"
+exit /b 0
+:missing
+echo Please extract ALL files from the full Frame ZIP into one folder.
+echo The offline package includes Frame.exe, ffmpeg.exe, ffprobe.exe and ffplay.exe.
+pause
+exit /b 1

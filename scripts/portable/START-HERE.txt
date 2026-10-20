@@ -1,31 +1,27 @@
-FRAME FOR WINDOWS — QUICK START
+FRAME FOR WINDOWS — OFFLINE QUICK START
 
-1. Extract the entire ZIP (right-click it and choose Extract All).
-2. Double-click Start-Frame.cmd in the extracted folder.
+1. Download the full Frame ZIP and choose Extract All.
+2. Double-click Frame.exe in the extracted folder.
 
-The first launch downloads FFmpeg, FFprobe and FFplay from:
-https://www.gyan.dev/ffmpeg/builds/
-The publisher's SHA-256 checksum is verified before extraction.
-The tools stay in the MediaTools folder beside the app. No administrator
-access, Rust, compiler, Node.js, npm, or PATH configuration is required.
-Keep the setup window open until Frame opens. Internet access and space
-for the download and extraction are needed the first time. Later launches
-work offline. Keep Start-Frame.cmd and Setup-Media-and-Start.ps1 beside Frame.exe.
+FFmpeg, FFprobe and FFplay are included. No internet connection, compiler,
+npm, administrator setup, or separate media-tool installation is needed.
+Keep all four .exe files together. Start-Frame.cmd is an optional shortcut.
+Do not launch the app from inside the ZIP.
 
-If you already have the media tools beside Frame.exe or on PATH, you can
-launch Frame.exe directly. Start-Frame.cmd also finds existing tools.
-If automatic setup fails, its window explains the problem; no system-wide
-settings are changed. You can put ffmpeg.exe, ffprobe.exe and ffplay.exe
-beside Frame.exe and retry. Do not launch the app from inside the ZIP.
+Choose Theme in the top bar for Midnight, Graphite, Amethyst, Forest or
+Dawn (light). Your choice is saved on this device and never changes video
+colors. Use Edit, Color, Audio and Motion workspaces for focused controls.
 
-TRY IT
 Open a .frame project from Templates to try explanation graphics.
-Use the project menu > New project for video resolution/fps templates.
+Use the project menu > New project for resolution/fps templates.
 Import footage, then double-click it or drag it onto the timeline.
-Use Save .frame to save your timeline, graphics, keyframes and media links.
-Original footage is linked rather than embedded: keep its files available.
+Save .frame preserves your editable timeline, graphics and keyframes.
+Original footage stays linked on disk rather than embedded in the project.
 
-This is an unsigned, cross-compiled Windows x64 application. Windows
-runtime and first-run downloader testing remain outstanding. The download
-from Gyan could not be exercised from the build environment's network.
-Read README.md for the implemented editor features and current limits.
+Media-Licenses and Sources contain media-tool license notices and complete
+corresponding source with the build recipe. These files are for reference;
+you do not need to compile or install them.
+
+This is an unsigned Windows x64 build, cross-compiled on Linux. Genuine
+Windows runtime testing remains outstanding. See README.md for current
+editor capabilities and limits.

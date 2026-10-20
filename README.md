@@ -2,7 +2,11 @@
 
 Frame is now a compiled **Rust desktop application**. It uses **egui/eframe** for a native GPU-rendered interface and **FFmpeg** for decoding, filtering, audio mixing, and export. There is no Electron, browser engine, JavaScript, npm, Node.js, Python service, HTTP server, or web build step in the application.
 
-[Workspace preview](docs/screenshots/workspace.png) · [Format templates](docs/screenshots/formats.png) · [Explanation graphics](docs/screenshots/graphics.png) · [Rendered rocket scene](docs/screenshots/explanation.png)
+[Workspace preview](docs/screenshots/workspace.png) · [Format templates](docs/screenshots/formats.png) · [Explanation graphics](docs/screenshots/graphics.png) · [Themes](docs/screenshots/themes.png) · [Graphite](docs/screenshots/graphite.png) · [Light theme](docs/screenshots/dawn.png) · [Rendered rocket scene](docs/screenshots/explanation.png)
+
+The workspace follows familiar professional editing conventions: project assets at the left, the program monitor in the center, effect controls at the right, and the layered timeline below. **Edit, Color, Audio, and Motion** workspace buttons open their relevant tools. Raised cards, contrasting panel depths, selection indicators, and consistent track colors make the hierarchy easier to scan.
+
+Choose **Theme** in the toolbar for **Midnight, Graphite, Amethyst, Forest, or Dawn**. Graphite uses neutral charcoal and warm gold; Dawn provides a light option. Theme choices persist between launches and affect only the interface, never exported footage or graphics.
 
 The previous Electron implementation is preserved in Git history at `2a3d1b4`. The current source replaces it rather than wrapping it.
 
@@ -11,11 +15,11 @@ The previous Electron implementation is preserved in Git history at `2a3d1b4`. T
 **[Download Frame for Windows (.zip)](https://github.com/SrijanCherupally/Frame/raw/refs/heads/main/downloads/Frame-Windows-x64.zip)**
 
 1. Download the ZIP and choose **Extract All**.
-2. Open the extracted folder and double-click **Start-Frame.cmd**.
+2. Open the extracted folder and double-click **Frame.exe**.
 
-That's it. No Rust, compiler, npm, or administrator setup is required. On the first launch, the launcher downloads FFmpeg from Gyan's Windows build site, verifies its published SHA-256 checksum, and places it inside the app folder. Keep the setup window open until Frame opens. Subsequent launches work offline. The first launch needs internet access and space for the media-tool download and extraction.
+The ZIP includes **FFmpeg, FFprobe, and FFplay** beside the app. No separate media download, first-launch internet connection, Rust, npm, or administrator setup is required. Keep the extracted folder together. It also contains templates, license notices, and the complete corresponding source and build recipe for the bundled media tools.
 
-**[Download only Frame.exe](https://github.com/SrijanCherupally/Frame/raw/refs/heads/main/downloads/Frame.exe)** is also available if you already have FFmpeg/FFprobe installed. The ZIP is recommended for the easier first-run setup. Windows x64; unsigned, cross-compiled build. The Windows launcher and runtime still need testing on Windows. [Download checksums](downloads/SHA256SUMS.txt).
+**[Download only Frame.exe](https://github.com/SrijanCherupally/Frame/raw/refs/heads/main/downloads/Frame.exe)** is an application-only update for an existing complete folder. Use the ZIP for a new installation. Windows x64; unsigned, cross-compiled build. Windows runtime testing remains outstanding. [Download checksums](downloads/SHA256SUMS.txt).
 
 The instructions below are for building Frame from source; you can skip them when using the download.
 
@@ -51,7 +55,7 @@ Building on Windows produces `target/release/frame.exe`. For a portable app fold
 .\scripts\package-windows.ps1
 ```
 
-That package includes the first-run launcher, which downloads missing media tools into the app folder. You can also run Frame.exe directly when FFmpeg is on PATH. To bundle your Windows media binaries, supply their directory and the license/corresponding-source materials for that FFmpeg build:
+The script reuses the bundled media tools, licenses, and source archive from the checked-in Windows ZIP, replaces the application with a fresh native Windows build, writes SHA-256 hashes, and creates an offline portable ZIP. Existing output folders and archives are preserved. To use a different FFmpeg build, provide all three executables and its license/corresponding-source materials:
 
 ```powershell
 .\scripts\package-windows.ps1 `
@@ -59,9 +63,9 @@ That package includes the first-run launcher, which downloads missing media tool
   -FfmpegLicenseDir C:\Tools\ffmpeg\distribution-materials
 ```
 
-The script runs native editing tests, compiles a release build, copies `Frame.exe` and optional companion binaries, writes SHA-256 hashes, and creates a portable ZIP. Existing package folders and archives are preserved. This is portable application packaging; code-signed installers and automatic updates are not implemented.
+The bundled tools are FFmpeg 7.1.5 with static x264 and SDL2, built from pinned, unmodified upstream sources. `Sources/MediaTools-source.tar.gz` in the ZIP includes those sources and [the build recipe](scripts/build-bundled-media.sh); `Media-Licenses` includes their notices. [Build provenance and source details](docs/bundled-media.txt). This GPL media build supports local-file processing and H.264/AAC export; network protocols, capture devices, and hardware acceleration are disabled. Source builds of Frame can use other compatible FFmpeg installations.
 
-`.github/workflows/windows.yml` also builds a Windows executable and uploads it as a workflow artifact. It does not publish a release or bundle FFmpeg automatically. A successful cross-compilation/type check does not establish that the UI and media tools have run on Windows; Windows runtime testing remains necessary.
+[Windows CI](.github/workflows/windows.yml) builds the native app, tests editing, exercises the bundled media tools, and uploads a complete offline ZIP. Its Windows runtime checks must pass before treating that platform as verified. Code signing, installers, and automatic updates are not implemented.
 
 ## Editing workflow
 
@@ -125,7 +129,7 @@ cargo build --locked --release
 
 The tests include:
 
-- Headless native UI drawing, keyboard splitting/undo, snapshots, and saving pending edits at shutdown.
+- Headless native UI drawing, keyboard splitting/undo, snapshots, saving pending edits at shutdown, all four workspace modes, and five persistent themes without project mutations.
 - Pure Rust retiming, source offsets, animation-preserving split/ripple edits, malformed project validation, atomic recovery, and library locking.
 - Fresh-library `.frame` restoration after moving its folder, offline sources, ID collisions, workspace recovery, exact keyframe round trips, all format/motion presets, and all explanation scenes.
 - Visible transparent renders of every graphic (including small canvases, thin lines and nearly zero values), real FFmpeg exports/previews of animated scenes, and pixel comparisons proving animated opacity matches static opacity and mid-animation seeks.
@@ -150,6 +154,9 @@ For a native-window smoke test in a graphical session:
 ./target/release/frame --ui-smoke screenshot.png
 ./target/release/frame --ui-smoke graphics.png graphics
 ./target/release/frame --ui-smoke formats.png formats
+./target/release/frame --ui-smoke themes.png themes
+./target/release/frame --ui-smoke graphite.png graphite
+./target/release/frame --ui-smoke dawn.png dawn
 ```
 
 This launches the actual OpenGL native window, requests a framebuffer screenshot after four seconds, and closes. In Linux CI, run it under an X11 virtual display. Unit UI tests need no browser or graphical server. Real media tests need FFmpeg/FFprobe.
@@ -161,6 +168,7 @@ Frame is an early working editor, not a Resolve/Premiere replacement. Still miss
 ## Source layout
 
 - `src/ui.rs`: native workspace, inspector, timeline, dialogs, asynchronous job coordination.
+- `src/ui/theme.rs`: centralized contrast palette, semantic accents, surfaces and raised cards.
 - `src/model.rs`, `src/edit.rs`: validated project format and pure edit operations.
 - `src/media.rs`: disk-linked media probing, thumbnail/proxy preparation, embedded demo assets.
 - `src/preview.rs`: cancellable bounded native frame streaming and optional audio output.
