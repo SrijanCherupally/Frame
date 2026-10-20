@@ -1064,6 +1064,25 @@ pub fn export(
     group: &ProcessGroup,
     mut progress: impl FnMut(f64),
 ) -> Result<()> {
+    export_with_encoder(
+        p,
+        assets,
+        folder,
+        output,
+        group,
+        crate::acceleration::Encoder::Auto,
+        |v, _| progress(v),
+    )
+}
+pub fn export_with_encoder(
+    p: &Project,
+    assets: &HashMap<String, Asset>,
+    folder: &Path,
+    output: &Path,
+    group: &ProcessGroup,
+    requested: crate::acceleration::Encoder,
+    mut progress: impl FnMut(f64, &str),
+) -> Result<()> {
     p.validate()?;
     ensure!(
         !output.exists(),
@@ -1084,55 +1103,87 @@ pub fn export(
         fs2::available_space(folder)? > 256 * 1024 * 1024,
         "Free space on the cache drive before exporting"
     );
-    let mut origin = 0.;
-    let mut chunks = vec![];
-    while origin < duration - 1e-8 {
-        group.check()?;
-        let mut window = (duration - origin).min(30.);
-        while p
-            .clips
-            .iter()
-            .filter(|c| c.start < origin + window && c.end() > origin)
-            .count()
-            > 24
-            && window > 1. / p.fps as f64
-        {
-            window = (window * p.fps as f64 / 2.).round().max(1.) / p.fps as f64;
-        }
-        let part = folder.join(format!("part-{:05}", chunks.len()));
-        let graph = build_graph_cancel(p, assets, &part, origin, window, Mode::Export, group)?;
-        let path = part.join("video.mp4");
-        let mut cmd = graph.command();
-        cmd.args([
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "20",
-            "-threads",
-            "2",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            "-progress",
-            "pipe:1",
-            "-nostats",
-        ])
-        .arg(&path);
-        render_progress(
-            &mut cmd,
-            &part.join("render.log"),
-            group,
-            |v| progress((origin + window * v) / duration * 0.98),
-            window,
+    use crate::acceleration::Encoder;
+    progress(0., "Checking export encoder");
+    let (mut encoder, mut fallback) = crate::acceleration::choose(requested, group)?;
+    let chunks = 'encoding: loop {
+        let status = format!(
+            "Rendering · {}{}",
+            encoder.active_label(),
+            if fallback.is_some() {
+                " (automatic fallback)"
+            } else {
+                ""
+            }
+        );
+        atomic_json(
+            &folder.join("acceleration.json"),
+            &serde_json::json!({
+                "requested": requested, "encoder": encoder, "fallback": fallback,
+            }),
         )?;
-        chunks.push(path);
-        origin += window;
-    }
+        progress(0., &status);
+        let mut origin = 0.;
+        let mut chunks = vec![];
+        while origin < duration - 1e-8 {
+            group.check()?;
+            let mut window = (duration - origin).min(30.);
+            while p
+                .clips
+                .iter()
+                .filter(|c| c.start < origin + window && c.end() > origin)
+                .count()
+                > 24
+                && window > 1. / p.fps as f64
+            {
+                window = (window * p.fps as f64 / 2.).round().max(1.) / p.fps as f64;
+            }
+            let part = folder.join(format!("part-{:05}", chunks.len()));
+            let graph = build_graph_cancel(p, assets, &part, origin, window, Mode::Export, group)?;
+            let path = part.join("video.mp4");
+            let mut cmd = graph.command();
+            cmd.args(encoder.args())
+                .args([
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "192k",
+                    "-movflags",
+                    "+faststart",
+                    "-progress",
+                    "pipe:1",
+                    "-nostats",
+                ])
+                .arg(&path);
+            let result = render_progress(
+                &mut cmd,
+                &part.join("render.log"),
+                group,
+                |v| progress((origin + window * v) / duration * 0.98, &status),
+                window,
+            );
+            if let Err(error) = result {
+                group.check()?;
+                if requested == Encoder::Auto && encoder == Encoder::Nvidia {
+                    // Restart all chunks using one encoder. Mixing H.264 parameter sets
+                    // from different encoders in a stream-copy concat is not reliable.
+                    fallback = Some(format!(
+                        "NVENC failed during export; restarted on CPU: {error}"
+                    ));
+                    encoder = Encoder::Cpu;
+                    let _ = fs::remove_file(&path);
+                    for chunk in &chunks {
+                        let _ = fs::remove_file(chunk);
+                    }
+                    continue 'encoding;
+                }
+                return Err(error);
+            }
+            chunks.push(path);
+            origin += window;
+        }
+        break chunks;
+    };
     group.check()?;
     let list = folder.join("concat.txt");
     fs::write(
@@ -1186,7 +1237,7 @@ pub fn export(
         let _ = fs::remove_file(chunk);
     }
     let _ = fs::remove_file(staging);
-    progress(1.);
+    progress(1., &format!("Complete · {}", encoder.active_label()));
     Ok(())
 }
 fn render_progress(

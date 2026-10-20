@@ -1,3 +1,4 @@
+mod acceleration;
 mod animation;
 mod effects;
 mod theme;
@@ -35,6 +36,7 @@ enum Event {
     Files(Vec<PathBuf>),
     Message(String),
     Job(Job),
+    Acceleration(String),
     Document(Document, Vec<Asset>),
 }
 
@@ -95,6 +97,9 @@ pub struct FrameApp {
     import_group: ProcessGroup,
     import_threads: Vec<JoinHandle<()>>,
     exports: Option<(ProcessGroup, JoinHandle<()>)>,
+    acceleration: crate::acceleration::Preferences,
+    acceleration_task: Option<(ProcessGroup, JoinHandle<()>)>,
+    acceleration_result: String,
     pub job: Option<Job>,
     thumb_cache: HashMap<String, TextureHandle>,
     search: String,
@@ -247,6 +252,8 @@ impl FrameApp {
             .and_then(|bytes| serde_json::from_slice::<Preferences>(&bytes).ok())
             .unwrap_or_default()
             .theme;
+        let acceleration = crate::acceleration::Preferences::load(&storage.root)?;
+        acceleration.apply();
         Ok(Self {
             project,
             assets: Arc::new(assets),
@@ -267,6 +274,9 @@ impl FrameApp {
             import_group: group,
             import_threads: vec![probe_thread, proxy_thread],
             exports: None,
+            acceleration,
+            acceleration_task: None,
+            acceleration_result: String::new(),
             job: None,
             thumb_cache: HashMap::new(),
             search: String::new(),
@@ -737,6 +747,7 @@ impl FrameApp {
         }
 
         let assets = self.assets.clone();
+        let encoder = self.acceleration.encoder;
 
         let tx = self.send.clone();
 
@@ -785,25 +796,36 @@ impl FrameApp {
 
             let mut state_error = None;
 
-            let result = render::export(&project, &assets, &dir, &path, &token, |v| {
-                if last.elapsed() > Duration::from_millis(300) || v >= 1. {
-                    job.progress = v;
+            let result = render::export_with_encoder(
+                &project,
+                &assets,
+                &dir,
+                &path,
+                &token,
+                encoder,
+                |v, status| {
+                    job.status = status.into();
+                    if last.elapsed() > Duration::from_millis(300) || v >= 1. {
+                        job.progress = v;
 
-                    if let Err(e) = render::persist_job(&dir, &job) {
-                        state_error = Some(e.to_string());
+                        if let Err(e) = render::persist_job(&dir, &job) {
+                            state_error = Some(e.to_string());
 
-                        token.cancel();
+                            token.cancel();
+                        }
+
+                        let _ = tx.send(Event::Job(job.clone()));
+
+                        last = Instant::now();
                     }
-
-                    let _ = tx.send(Event::Job(job.clone()));
-
-                    last = Instant::now();
-                }
-            });
+                },
+            );
 
             match result {
                 Ok(()) => {
-                    job.status = "Complete".into();
+                    if !job.status.starts_with("Complete") {
+                        job.status = "Complete".into();
+                    }
 
                     job.progress = 1.;
                 }
@@ -831,6 +853,7 @@ impl FrameApp {
     fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.events.try_recv() {
             match event {
+                Event::Acceleration(result) => self.acceleration_result = result,
                 Event::Asset(a) => {
                     let id = a.id.clone();
 
@@ -2687,6 +2710,8 @@ ui.selectable_value(&mut self.export_size,size,label);
 }
 );
 
+ui.add_space(10.);
+self.acceleration_controls(ui, "export");
    if let Some(job)=&self.job{
 ui.add_space(12.);
 ui.label(RichText::new(&job.status).strong().color(if job.status=="Failed"{
@@ -2699,7 +2724,7 @@ if let Some(error)=&job.error{
 ui.label(RichText::new(error).small().color(Color32::LIGHT_RED));
 }
 
-if job.status=="Complete"&& let Some(path)=&job.output{
+if job.status.starts_with("Complete")&& let Some(path)=&job.output{
 ui.label(RichText::new(format!("Saved to {}",path.display())).small());
 }
 }
@@ -2739,6 +2764,8 @@ ui.label(RichText::new("Choose a new filename. Existing videos are never overwri
 
                 ui.add_space(10.);
 
+                self.acceleration_controls(ui, "settings");
+                ui.add_space(10.);
                 ui.label(
                     RichText::new(format!(
                         "Cache and projects: {}",
@@ -2965,6 +2992,10 @@ impl Drop for FrameApp {
             let _ = handle.join();
         }
 
+        if let Some((group, handle)) = self.acceleration_task.take() {
+            group.cancel();
+            let _ = handle.join();
+        }
         if let Some((group, handle)) = self.exports.take() {
             group.cancel();
 

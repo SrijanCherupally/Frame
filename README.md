@@ -45,7 +45,7 @@ On Windows, the standard Rust MSVC toolchain needs Visual Studio C++ Build Tools
 
 Place `ffmpeg` and `ffprobe` beside the application executable or install them on PATH. Add `ffplay` for native audio preview. FFplay is optional for video preview and export; exported audio is mixed by FFmpeg regardless. Custom binary locations can be set with `FRAME_FFMPEG`, `FRAME_FFPROBE`, and `FRAME_FFPLAY`.
 
-The UI draws through the GPU. Video effects, proxy generation, and export currently use CPU-based FFmpeg processing. Rust removes the browser runtime and scripting-language coordination layers, but it does not make codecs, disk I/O, or every effect arbitrarily fast. GPU decoding/encoding and hundred-gigabyte project benchmarks are still future work.
+The UI draws through the GPU. **NVIDIA NVENC export encoding** and **DX12/Vulkan 3D rasterization** now default to Automatic, with CPU fallback. Open Settings or Export video → Hardware acceleration to check your GPU or choose CPU/required NVIDIA mode. RTX 4070 Laptop GPUs support both paths. Decoding, compositing, masks, vector drawing, temporal filters and proxies still use the CPU; acceleration is not a promise of real-time effects or hundred-gigabyte project performance. [GPU setup, scope and troubleshooting](docs/gpu-guide.md).
 
 ## Windows application and packaging
 
@@ -63,7 +63,7 @@ The script reuses the bundled media tools, licenses, and source archive from the
   -FfmpegLicenseDir C:\Tools\ffmpeg\distribution-materials
 ```
 
-The bundled tools are FFmpeg 7.1.5 with static x264 and SDL2, built from pinned, unmodified upstream sources. `Sources/MediaTools-source.tar.gz` in the ZIP includes those sources and [the build recipe](scripts/build-bundled-media.sh); `Media-Licenses` includes their notices. [Build provenance and source details](docs/bundled-media.txt). This GPL media build supports local-file processing and H.264/AAC export; network protocols, capture devices, and hardware acceleration are disabled. Source builds of Frame can use other compatible FFmpeg installations.
+The bundled tools are FFmpeg 7.1.5 with static x264 and SDL2 plus nv-codec-headers for dynamically loaded NVIDIA NVENC, built from pinned, unmodified upstream sources. `Sources/MediaTools-source.tar.gz` in the ZIP includes those sources and [the build recipe](scripts/build-bundled-media.sh); `Media-Licenses` includes their notices. [Build provenance and source details](docs/bundled-media.txt). This GPL media build supports local-file processing and H.264/AAC export; network protocols and capture devices are disabled. NVIDIA H.264 encoding is enabled and loads its runtime from the installed NVIDIA driver; GPU decoding/effects are not used. Source builds of Frame can use other compatible FFmpeg installations.
 
 [Windows CI](.github/workflows/windows.yml) builds the native app, tests editing, exercises the bundled media tools, and uploads a complete offline ZIP. Its Windows runtime checks must pass before treating that platform as verified. Code signing, installers, and automatic updates are not implemented.
 
@@ -187,7 +187,7 @@ This launches the actual OpenGL native window, requests a framebuffer screenshot
 
 ## Current limits
 
-Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, planar/camera/semantic tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, nested/parented motion compositions, full SVG documents, textured/rigged 3D scenes, synchronized telemetry channels, plugins, collaboration, an MCP server, hardware video acceleration, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
+Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, planar/camera/semantic tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, nested/parented motion compositions, full SVG documents, textured/rigged 3D scenes, synchronized telemetry channels, plugins, collaboration, an MCP server, GPU video decoding/compositing, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
 
 ## Source layout
 

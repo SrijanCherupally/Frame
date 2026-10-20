@@ -39,11 +39,20 @@ fn run() -> anyhow::Result<()> {
         }
         return Ok(());
     }
+    if args.first().map(String::as_str) == Some("--check-gpu") {
+        println!(
+            "{}",
+            frame_studio::acceleration::diagnostics(&ProcessGroup::default())?
+        );
+        return Ok(());
+    }
     let storage = Storage::open(Storage::default_root())?;
+    let preferences = frame_studio::acceleration::Preferences::load(&storage.root)?;
+    preferences.apply();
     if args.first().map(String::as_str) == Some("--render") {
         anyhow::ensure!(
-            args.len() == 3,
-            "Usage: frame --render project.frame.json output.mp4"
+            args.len() == 3 || (args.len() == 5 && args[3] == "--encoder"),
+            "Usage: frame --render project.frame output.mp4 [--encoder auto|nvidia|cpu]"
         );
         frame_studio::media::seed(&storage.root)?;
         let mut doc = frame_studio::document::Document::read(&PathBuf::from(&args[1]))?;
@@ -53,13 +62,21 @@ fn run() -> anyhow::Result<()> {
         }
         let p = doc.project;
         let folder = storage.root.join("jobs").join(frame_studio::model::uid());
-        render::export(
+        let encoder = match args.get(4).map(String::as_str) {
+            Some("auto") => frame_studio::acceleration::Encoder::Auto,
+            Some("nvidia") => frame_studio::acceleration::Encoder::Nvidia,
+            Some("cpu") => frame_studio::acceleration::Encoder::Cpu,
+            None => preferences.encoder,
+            _ => anyhow::bail!("Encoder must be auto, nvidia or cpu"),
+        };
+        render::export_with_encoder(
             &p,
             &assets,
             &folder,
             &PathBuf::from(&args[2]),
             &ProcessGroup::default(),
-            |v| eprintln!("Export {:.0}%", v * 100.),
+            encoder,
+            |v, status| eprintln!("{status} · {:.0}%", v * 100.),
         )?;
         return Ok(());
     }
@@ -67,7 +84,7 @@ fn run() -> anyhow::Result<()> {
     let screenshot = if args.first().map(String::as_str) == Some("--ui-smoke") {
         anyhow::ensure!(
             (2..=3).contains(&args.len()),
-            "Usage: frame --ui-smoke screenshot.png [graphics|motion|animation|vectors|3d|tracking|tracking-demo|blur|formats|themes|midnight|graphite|amethyst|forest|dawn|edit|color|audio]"
+            "Usage: frame --ui-smoke screenshot.png [settings|export|graphics|motion|animation|vectors|3d|tracking|tracking-demo|blur|formats|themes|midnight|graphite|amethyst|forest|dawn|edit|color|audio]"
         );
         if let Some(view) = args.get(2) {
             app.prepare_smoke_view(view)?;

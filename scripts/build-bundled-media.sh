@@ -27,6 +27,8 @@ checkout_source() {
 }
 checkout_source "$MEDIA_ROOT/ffmpeg" https://github.com/FFmpeg/FFmpeg.git 3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587
 checkout_source "$MEDIA_ROOT/x264" https://github.com/mirror/x264.git c24e06c2e184345ceb33eb20a15d1024d9fd3497
+checkout_source "$MEDIA_ROOT/nv-codec-headers" https://github.com/FFmpeg/nv-codec-headers.git 1889e62e2d35ff7aa9baca2bceb14f053785e6f1
+make -C "$MEDIA_ROOT/nv-codec-headers" PREFIX="$MEDIA_PREFIX" install
 checkout_source "$MEDIA_ROOT/SDL" https://github.com/libsdl-org/SDL.git 8acf7cfc0f88717e5c036f60f0314bfcafe39189
 (
     cd "$MEDIA_ROOT/x264"
@@ -48,7 +50,7 @@ mkdir -p "$MEDIA_ROOT/build-sdl"
         --prefix="$MEDIA_PREFIX" --pkg-config=pkg-config --pkg-config-flags=--static \
         --enable-gpl --enable-libx264 --enable-sdl2 --enable-static --disable-shared \
         --disable-debug --disable-doc --disable-autodetect --disable-network \
-        --disable-hwaccels --disable-devices --enable-indev=lavfi \
+        --disable-hwaccels --enable-ffnvcodec --enable-nvenc --disable-devices --enable-indev=lavfi \
         --enable-w32threads --disable-pthreads --extra-ldflags=-static
     make -j"$MEDIA_JOBS"
     make install

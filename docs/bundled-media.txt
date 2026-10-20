@@ -8,6 +8,9 @@ x264: https://github.com/mirror/x264
 SDL2: https://github.com/libsdl-org/SDL
   commit 8acf7cfc0f88717e5c036f60f0314bfcafe39189
 
+nv-codec-headers 12.1.14.0: https://github.com/FFmpeg/nv-codec-headers
+  commit 1889e62e2d35ff7aa9baca2bceb14f053785e6f1
+
 Complete source snapshots and a build recipe are included in
 Sources/MediaTools-source.tar.gz in the same download. No media tools are
 downloaded at first launch. Frame discovers the executables beside Frame.exe.
@@ -17,7 +20,7 @@ pkg-config on Linux. Extract the sources, then run the commands in
 build-bundled-media.sh with the source folder as the build root. The script
 can also fetch and verify the pinned upstream revisions into a fresh folder.
 Offline snapshots can be configured with the same commands in order: x264,
-SDL2 (in build-sdl), then FFmpeg. FRAME_MEDIA_JOBS controls parallelism and
+SDL2 (in build-sdl), nv-codec-headers (make PREFIX=... install), then FFmpeg. FRAME_MEDIA_JOBS controls parallelism and
 FRAME_CROSS_PREFIX selects the MinGW compiler prefix. The reference build
 used GCC 14.2.0, binutils 2.44 and NASM 2.16.03. x264 includes 8-bit and
 10-bit encoding and x86 SIMD assembly. Sources are unmodified upstream code.
@@ -28,10 +31,14 @@ contains FFmpeg, x264, SDL2 and toolchain notices. Frame and the media tools
 are separate programs distributed together; third-party code is attributed
 to its upstream authors.
 
-Local files, native codecs and libx264/AAC export are enabled. Network
-protocols, hardware accelerators and capture devices are disabled; Frame
-currently edits local files. Codec availability is build-dependent. This
-is a dedicated Frame media build, not the Gyan distribution.
+Local files, native codecs, libx264/AAC export and NVIDIA NVENC encoders
+are enabled. NVENC loads the CUDA/NVIDIA encode runtime from the installed
+NVIDIA driver; no proprietary NVIDIA runtime is included. The bundled
+nv-codec-headers use the MIT license (see Media-Licenses) and are included
+in the source archive. Network protocols, hardware decoding accelerators
+and capture devices are disabled; Frame currently edits local files.
+Codec availability is build-dependent. This is a dedicated Frame media
+build, not the Gyan distribution.
 
 The tools were cross-compiled on Linux. Windows runtime checks remain
 outstanding; the Windows CI workflow includes a media smoke test.

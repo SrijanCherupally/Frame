@@ -22,6 +22,12 @@ Motion > Tracking / Motion blur opens tracking and animation shutter blur.
 Try the VFX example projects in Templates and Templates/VFX.
 See docs/vfx-guide.md for the supported workflows and limits.
 
+Settings / Export > Hardware acceleration offers NVIDIA NVENC encoding
+and automatic GPU 3D rendering. Click Check GPU & encoder to test them.
+Install a current NVIDIA driver for RTX laptops; no CUDA toolkit needed.
+Use the full updated ZIP when upgrading to NVENC support. CPU fallback is
+available. See docs/gpu-guide.md for supported stages and troubleshooting.
+
 Open a .frame project from Templates to try explanation graphics.
 Use the project menu > New project for resolution/fps templates.
 Import footage, then double-click it or drag it onto the timeline.

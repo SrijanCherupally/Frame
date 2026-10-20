@@ -1,0 +1,30 @@
+name: GPU pipeline verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['src/**', 'tests/acceleration.rs', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/gpu.yml']
+  pull_request:
+    paths: ['src/**', 'tests/acceleration.rs', 'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', '.github/workflows/gpu.yml']
+permissions:
+  contents: read
+jobs:
+  vulkan-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install media and software Vulkan driver
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg libvulkan1 mesa-vulkan-drivers
+      - name: Install pinned Rust toolchain
+        run: rustup show
+      - name: Compare Vulkan rasterization with the CPU reference
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/frame-runtime"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          for driver in /usr/share/vulkan/icd.d/*lvp*json; do
+            if [ -f "$driver" ]; then export VK_ICD_FILENAMES="$driver"; break; fi
+          done
+          cargo test --locked --lib gpu3d::tests::gpu_raster_matches_cpu_depth_clipping_wireframe_and_readback -- --ignored --exact --nocapture
+      - name: Verify encoding, timeouts and simulated mid-export device loss
+        run: cargo test --locked --test acceleration

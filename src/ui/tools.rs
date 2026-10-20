@@ -5,6 +5,11 @@ impl FrameApp {
     pub fn prepare_smoke_view(&mut self, view: &str) -> anyhow::Result<()> {
         match view {
             "graphics" => self.tab = Tab::Graphics,
+            "export" => {
+                self.export_size = [self.project.width, self.project.height];
+                self.export_window = true;
+            }
+            "settings" => self.settings_window = true,
             "vectors" => {
                 self.open_effects(super::effects::Panel::Vector);
                 self.new_effect_layer(super::effects::Panel::Vector);

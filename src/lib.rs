@@ -14,3 +14,6 @@ pub mod procedural;
 pub mod scene3d;
 pub mod tracking;
 pub mod vector;
+
+pub mod acceleration;
+pub mod gpu3d;

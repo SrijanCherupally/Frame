@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 #[derive(Clone, Default)]
 pub struct ProcessGroup {
@@ -69,6 +69,24 @@ impl ProcessGroup {
         Ok(ManagedChild { child })
     }
     pub fn run(&self, cmd: &mut Command, log: Option<&Path>) -> Result<Vec<u8>> {
+        self.run_internal(cmd, log, None)
+    }
+    pub fn run_timeout(
+        &self,
+        cmd: &mut Command,
+        log: Option<&Path>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        self.run_internal(cmd, log, Some(timeout))
+    }
+    fn run_internal(
+        &self,
+        cmd: &mut Command,
+        log: Option<&Path>,
+        timeout: Option<Duration>,
+    ) -> Result<Vec<u8>> {
+        let started = Instant::now();
+        let mut timed_out = false;
         let process = self.spawn(
             cmd.stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -81,7 +99,8 @@ impl ProcessGroup {
         let stdout = thread::spawn(move || read_bounded(&mut out, 16 * 1024 * 1024));
         let stderr = thread::spawn(move || read_bounded(&mut err, 4 * 1024 * 1024));
         let status = loop {
-            if self.cancelled() {
+            timed_out |= timeout.is_some_and(|t| started.elapsed() >= t);
+            if self.cancelled() || timed_out {
                 let _ = process
                     .child
                     .lock()
@@ -109,6 +128,9 @@ impl ProcessGroup {
             f.write_all(&errors)?;
         }
         self.check()?;
+        if timed_out {
+            bail!("Media tool timed out");
+        }
         if !status.success() {
             let msg = String::from_utf8_lossy(&errors);
             bail!(

@@ -4,6 +4,8 @@ $folder = (Resolve-Path $PackageDir).Path
 $temp = Join-Path ([System.IO.Path]::GetTempPath()) ("frame-media-test-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
+    $encoders = & (Join-Path $folder "ffmpeg.exe") -hide_banner -encoders 2>&1
+    if ($LASTEXITCODE -ne 0 -or !(($encoders -join "`n") -match "h264_nvenc")) { throw "Bundled FFmpeg must include h264_nvenc; no NVIDIA hardware is required to list it." }
     $sample = Join-Path $temp "sample.mp4"
     & (Join-Path $folder "ffmpeg.exe") -hide_banner -nostdin -v error -f lavfi -i "testsrc2=size=320x180:rate=30:duration=1" -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=1" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -shortest $sample
     if ($LASTEXITCODE -ne 0) { throw "Bundled FFmpeg H.264/AAC encoding failed." }

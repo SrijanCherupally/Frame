@@ -441,12 +441,32 @@ impl Scene {
         }
         Ok(())
     }
+    /// Deterministic software reference and fallback renderer.
+    pub fn render_cpu(
+        &self,
+        time: f64,
+        w: u32,
+        h: u32,
+        group: &ProcessGroup,
+    ) -> Result<image::RgbaImage> {
+        self.render_backend(time, w, h, group, false)
+    }
     pub fn render(
         &self,
         time: f64,
         w: u32,
         h: u32,
         group: &ProcessGroup,
+    ) -> Result<image::RgbaImage> {
+        self.render_backend(time, w, h, group, true)
+    }
+    fn render_backend(
+        &self,
+        time: f64,
+        w: u32,
+        h: u32,
+        group: &ProcessGroup,
+        gpu: bool,
     ) -> Result<image::RgbaImage> {
         ensure!(
             w > 0 && h > 0 && w <= 3840 && h <= 3840 && time.is_finite(),
@@ -455,7 +475,7 @@ impl Scene {
         if self.antialias && w as u64 * h as u64 <= 1920 * 1080 {
             // Render at double resolution, resize premultiplied colors, then
             // unpremultiply so transparent edges do not acquire dark fringes.
-            let mut high = self.render_inner(time, w * 2, h * 2, group)?;
+            let mut high = self.render_dispatch(time, w * 2, h * 2, group, gpu)?;
             for p in high.pixels_mut() {
                 for i in 0..3 {
                     p[i] = ((p[i] as u32 * p[3] as u32) / 255) as u8;
@@ -472,7 +492,92 @@ impl Scene {
             }
             return Ok(small);
         }
+        self.render_dispatch(time, w, h, group, gpu)
+    }
+    fn render_dispatch(
+        &self,
+        time: f64,
+        w: u32,
+        h: u32,
+        group: &ProcessGroup,
+        gpu: bool,
+    ) -> Result<image::RgbaImage> {
+        self.validate()?;
+        group.check()?;
+        if gpu && let Some(image) = crate::gpu3d::render(self, time, w, h, group)? {
+            return Ok(image);
+        }
         self.render_inner(time, w, h, group)
+    }
+    pub(crate) fn gpu_vertices(
+        &self,
+        time: f64,
+        w: u32,
+        h: u32,
+        group: &ProcessGroup,
+    ) -> Result<Vec<crate::gpu3d::Vertex>> {
+        self.validate()?;
+        let camera = self.camera_at(time);
+        let focal = 1. / (camera.fov.to_radians() / 2.).tan();
+        let aspect = w as f64 / h as f64;
+        let camera_axes = [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]
+            .map(|v| sub(camera.view(v), [0., 0., camera.distance]));
+        let mut vertices = Vec::new();
+        for object in &self.objects {
+            group.check()?;
+            let geometry = object.geometry();
+            let pose = object.at(time);
+            let axes = basis(pose.rotation);
+            let world: Vec<_> = geometry
+                .vertices
+                .iter()
+                .map(|v| add(transform(axes, mul(*v, pose.scale)), pose.position))
+                .collect();
+            let view: Vec<_> = world
+                .iter()
+                .map(|v| add(transform(camera_axes, *v), [0., 0., camera.distance]))
+                .collect();
+            let material = color(&object.color);
+            for (index, face) in geometry.triangles.iter().enumerate() {
+                if index % 64 == 0 {
+                    group.check()?;
+                }
+                let normal = cross(
+                    sub(world[face[1]], world[face[0]]),
+                    sub(world[face[2]], world[face[0]]),
+                );
+                let len = dot(normal, normal).sqrt();
+                if len < 1e-12 {
+                    continue;
+                }
+                let light = (dot(mul(normal, 1. / len), [-0.4, 0.5, -0.7681145748]).abs()
+                    * (1. - self.ambient)
+                    + self.ambient)
+                    .clamp(0., 1.);
+                let color = [
+                    (material[0] as f64 * light).floor() as f32 / 255.,
+                    (material[1] as f64 * light).floor() as f32 / 255.,
+                    (material[2] as f64 * light).floor() as f32 / 255.,
+                    f32::from(self.wireframe),
+                ];
+                for (corner, index) in face.iter().enumerate() {
+                    let p = view[*index];
+                    let mut barycentric = [0.; 3];
+                    barycentric[corner] = 1.;
+                    vertices.push(crate::gpu3d::Vertex {
+                        position: [
+                            (p[0] * focal / aspect) as f32,
+                            (p[1] * focal) as f32,
+                            (p[2] - 0.1) as f32,
+                            p[2] as f32,
+                        ],
+                        color,
+                        barycentric,
+                    });
+                }
+            }
+        }
+        Ok(vertices)
     }
     fn render_inner(
         &self,
