@@ -11,6 +11,9 @@ SDL2: https://github.com/libsdl-org/SDL
 nv-codec-headers 12.1.14.0: https://github.com/FFmpeg/nv-codec-headers
   commit 1889e62e2d35ff7aa9baca2bceb14f053785e6f1
 
+zlib 1.3.1: https://github.com/madler/zlib
+  commit 51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
+
 Complete source snapshots and a build recipe are included in
 Sources/MediaTools-source.tar.gz in the same download. No media tools are
 downloaded at first launch. Frame discovers the executables beside Frame.exe.
@@ -19,7 +22,8 @@ To rebuild, install MinGW-w64 x86_64 GCC/binutils, GNU make, NASM and
 pkg-config on Linux. Extract the sources, then run the commands in
 build-bundled-media.sh with the source folder as the build root. The script
 can also fetch and verify the pinned upstream revisions into a fresh folder.
-Offline snapshots can be configured with the same commands in order: x264,
+Offline snapshots can be configured with the same commands in order: zlib
+(static libz.a plus headers using win32/Makefile.gcc), x264,
 SDL2 (in build-sdl), nv-codec-headers (make PREFIX=... install), then FFmpeg. FRAME_MEDIA_JOBS controls parallelism and
 FRAME_CROSS_PREFIX selects the MinGW compiler prefix. The reference build
 used GCC 14.2.0, binutils 2.44 and NASM 2.16.03. x264 includes 8-bit and
@@ -30,6 +34,11 @@ statically. Their license is GNU GPL version 2 or later. Media-Licenses
 contains FFmpeg, x264, SDL2 and toolchain notices. Frame and the media tools
 are separate programs distributed together; third-party code is attributed
 to its upstream authors.
+
+zlib is linked statically to enable PNG decoding/encoding (used for sample
+artwork, imported PNGs, generated titles and graphics) and other native
+codecs that depend on deflate. Its license is in Media-Licenses and its
+unmodified source is included in the corresponding-source archive.
 
 Local files, native codecs, libx264/AAC export and NVIDIA NVENC encoders
 are enabled. NVENC loads the CUDA/NVIDIA encode runtime from the installed

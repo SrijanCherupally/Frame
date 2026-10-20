@@ -8,6 +8,12 @@ npm, administrator setup, or separate media-tool installation is needed.
 Keep all four .exe files together. Start-Frame.cmd is an optional shortcut.
 Do not launch the app from inside the ZIP.
 
+If upgrading from a version with a black/failed preview, extract the full
+updated ZIP into a new folder. Earlier media tools omitted PNG decoding;
+updating only Frame.exe cannot fix that. Preview error details and Retry
+are available under the monitor; recent logs stay in the cache diagnostics
+folder. Your projects and linked originals are preserved.
+
 Choose Theme in the top bar for Midnight, Graphite, Amethyst, Forest or
 Dawn (light). Your choice is saved on this device and never changes video
 colors. Use Edit, Color, Audio and Motion workspaces for focused controls.

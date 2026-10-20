@@ -8,7 +8,7 @@ CROSS_PREFIX="${FRAME_CROSS_PREFIX:-x86_64-w64-mingw32-}"
 mkdir -p "$MEDIA_ROOT"
 MEDIA_ROOT="$(cd "$MEDIA_ROOT" && pwd)"
 MEDIA_PREFIX="$MEDIA_ROOT/prefix"
-mkdir -p "$MEDIA_PREFIX"
+mkdir -p "$MEDIA_PREFIX/lib" "$MEDIA_PREFIX/include"
 checkout_source() {
     local directory="$1" repository="$2" revision="$3"
     if [[ ! -d "$directory/.git" && -f "$directory/.frame-source-revision" ]]; then
@@ -26,6 +26,13 @@ checkout_source() {
     }
 }
 checkout_source "$MEDIA_ROOT/ffmpeg" https://github.com/FFmpeg/FFmpeg.git 3a0867c2bfda4a4d4309ca1a8cbdc6175e67f587
+checkout_source "$MEDIA_ROOT/zlib" https://github.com/madler/zlib.git 51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf
+(
+    cd "$MEDIA_ROOT/zlib"
+    make -f win32/Makefile.gcc -j"$MEDIA_JOBS" PREFIX="$CROSS_PREFIX" libz.a
+    install -m 0644 libz.a "$MEDIA_PREFIX/lib/libz.a"
+    install -m 0644 zlib.h zconf.h "$MEDIA_PREFIX/include/"
+)
 checkout_source "$MEDIA_ROOT/x264" https://github.com/mirror/x264.git c24e06c2e184345ceb33eb20a15d1024d9fd3497
 checkout_source "$MEDIA_ROOT/nv-codec-headers" https://github.com/FFmpeg/nv-codec-headers.git 1889e62e2d35ff7aa9baca2bceb14f053785e6f1
 make -C "$MEDIA_ROOT/nv-codec-headers" PREFIX="$MEDIA_PREFIX" install
@@ -48,10 +55,11 @@ mkdir -p "$MEDIA_ROOT/build-sdl"
     PKG_CONFIG_LIBDIR="$MEDIA_PREFIX/lib/pkgconfig" ./configure \
         --target-os=mingw32 --arch=x86_64 --cross-prefix="$CROSS_PREFIX" \
         --prefix="$MEDIA_PREFIX" --pkg-config=pkg-config --pkg-config-flags=--static \
-        --enable-gpl --enable-libx264 --enable-sdl2 --enable-static --disable-shared \
+        --enable-gpl --enable-libx264 --enable-sdl2 --enable-zlib --enable-static --disable-shared \
         --disable-debug --disable-doc --disable-autodetect --disable-network \
         --disable-hwaccels --enable-ffnvcodec --enable-nvenc --disable-devices --enable-indev=lavfi \
-        --enable-w32threads --disable-pthreads --extra-ldflags=-static
+        --enable-w32threads --disable-pthreads \
+        --extra-cflags="-I$MEDIA_PREFIX/include" --extra-ldflags="-static -L$MEDIA_PREFIX/lib"
     make -j"$MEDIA_JOBS"
     make install
 )

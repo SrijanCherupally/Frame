@@ -47,6 +47,12 @@ Place `ffmpeg` and `ffprobe` beside the application executable or install them o
 
 The UI draws through the GPU. **NVIDIA NVENC export encoding** and **DX12/Vulkan 3D rasterization** now default to Automatic, with CPU fallback. Open Settings or Export video → Hardware acceleration to check your GPU or choose CPU/required NVIDIA mode. RTX 4070 Laptop GPUs support both paths. Decoding, compositing, masks, vector drawing, temporal filters and proxies still use the CPU; acceleration is not a promise of real-time effects or hundred-gigabyte project performance. [GPU setup, scope and troubleshooting](docs/gpu-guide.md).
 
+## Preview troubleshooting
+
+If the monitor reports a preview error, use **Preview error details…** to inspect/copy the actual cause and **Retry preview** after repairing or relinking the source. The latest five diagnostic logs are kept in the cache's `diagnostics` folder, even after temporary preview files are removed. Corrupt image decoding stops instead of looping indefinitely; a process that exits without frames is reported as an error.
+
+An earlier Windows media package omitted zlib, which disabled PNG decoding. This could break sample artwork, PNG imports, titles and graphics in both preview and export. **Download and extract the complete updated ZIP** to replace FFmpeg as well as Frame.exe; replacing only Frame.exe cannot add the missing codec. Windows packaging checks now include PNG decoding, transparent-image composition and native preview integration tests.
+
 ## Windows application and packaging
 
 Building on Windows produces `target/release/frame.exe`. For a portable app folder and ZIP:
@@ -63,7 +69,7 @@ The script reuses the bundled media tools, licenses, and source archive from the
   -FfmpegLicenseDir C:\Tools\ffmpeg\distribution-materials
 ```
 
-The bundled tools are FFmpeg 7.1.5 with static x264 and SDL2 plus nv-codec-headers for dynamically loaded NVIDIA NVENC, built from pinned, unmodified upstream sources. `Sources/MediaTools-source.tar.gz` in the ZIP includes those sources and [the build recipe](scripts/build-bundled-media.sh); `Media-Licenses` includes their notices. [Build provenance and source details](docs/bundled-media.txt). This GPL media build supports local-file processing and H.264/AAC export; network protocols and capture devices are disabled. NVIDIA H.264 encoding is enabled and loads its runtime from the installed NVIDIA driver; GPU decoding/effects are not used. Source builds of Frame can use other compatible FFmpeg installations.
+The bundled tools are FFmpeg 7.1.5 with static x264, SDL2 and zlib (including PNG support), plus nv-codec-headers for dynamically loaded NVIDIA NVENC, built from pinned, unmodified upstream sources. `Sources/MediaTools-source.tar.gz` in the ZIP includes those sources and [the build recipe](scripts/build-bundled-media.sh); `Media-Licenses` includes their notices. [Build provenance and source details](docs/bundled-media.txt). This GPL media build supports local-file processing and H.264/AAC export; network protocols and capture devices are disabled. NVIDIA H.264 encoding is enabled and loads its runtime from the installed NVIDIA driver; GPU decoding/effects are not used. Source builds of Frame can use other compatible FFmpeg installations.
 
 [Windows CI](.github/workflows/windows.yml) builds the native app, tests editing, exercises the bundled media tools, and uploads a complete offline ZIP. Its Windows runtime checks must pass before treating that platform as verified. Code signing, installers, and automatic updates are not implemented.
 

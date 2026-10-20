@@ -7,8 +7,8 @@ use crate::{
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::{
     collections::HashMap,
-    io::Read,
-    path::PathBuf,
+    io::{Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
     thread::{self, JoinHandle},
@@ -118,7 +118,7 @@ impl Preview {
                 )?;
                 let mut cmd = graph.command();
                 cmd.args([
-                    "-an", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "2", "pipe:1",
+                    "-xerror", "-an", "-f", "rawvideo", "-pix_fmt", "rgb24", "-threads", "2", "pipe:1",
                 ]);
                 let errors = std::fs::File::create(dir.join("video.log"))?;
                 let process = group.spawn(
@@ -200,11 +200,18 @@ impl Preview {
                 loop {
                     group.check()?;
                     let mut pixels = vec![0; (p.width * p.height * 3) as usize];
-                    match output.read_exact(&mut pixels) {
-                        Ok(()) => {}
-                        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                        Err(e) => return Err(e.into()),
-                    };
+                    let mut filled = 0;
+                    while filled < pixels.len() {
+                        group.check()?;
+                        match output.read(&mut pixels[filled..]) {
+                            Ok(0) => break,
+                            Ok(n) => filled += n,
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                            Err(e) => return Err(e.into()),
+                        }
+                    }
+                    if filled == 0 { break; }
+                    anyhow::ensure!(filled == pixels.len(), "Preview returned an incomplete RGB frame ({filled}/{} bytes)", pixels.len());
                     let mut event = PreviewEvent::Frame {
                         pixels,
                         width: p.width,
@@ -228,10 +235,9 @@ impl Preview {
                     .wait()?;
                 group.check()?;
                 if !code.success() {
-                    anyhow::bail!(
-                        "Preview failed. Check the source file or wait for its proxy to finish."
-                    );
+                    anyhow::bail!("FFmpeg preview failed ({code}).\n{}", log_tail(&dir.join("video.log"), 16 * 1024));
                 }
+                anyhow::ensure!(i > 0, "FFmpeg produced no preview frames. Try another timeline position or relink the source.\n{}", log_tail(&dir.join("video.log"), 16 * 1024));
                 drop(audio_children);
                 Ok(())
             })();
@@ -242,7 +248,7 @@ impl Preview {
                     }
                     Err(e) => {
                         let _ = tx(
-                            PreviewEvent::Error(e.to_string()),
+                            PreviewEvent::Error(preserve_failure(&root, &dir, &format!("{e:#}"))),
                             Duration::from_millis(100),
                         );
                     }
@@ -259,5 +265,97 @@ impl Drop for Preview {
         for h in self.workers.drain(..) {
             let _ = h.join();
         }
+    }
+}
+
+/// Read only the bounded tail; FFmpeg progress logs can be much larger.
+fn log_tail(path: &Path, limit: u64) -> String {
+    let result = (|| -> std::io::Result<String> {
+        let mut file = std::fs::File::open(path)?;
+        let size = file.metadata()?.len();
+        file.seek(SeekFrom::Start(size.saturating_sub(limit)))?;
+        let mut bytes = Vec::new();
+        file.take(limit).read_to_end(&mut bytes)?;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    })();
+    result.unwrap_or_default()
+}
+fn preserve_failure(root: &Path, dir: &Path, error: &str) -> String {
+    let lower = error.to_lowercase();
+    let png_unavailable = error.lines().any(|line| {
+        let line = line.to_lowercase();
+        line.contains("png")
+            && (line.contains("decoder") || line.contains("decoding"))
+            && (line.contains("not found")
+                || line.contains("no decoder")
+                || line.contains("not available"))
+    });
+    let summary = if png_unavailable {
+        "The media tools cannot decode PNG images. Install the complete updated Frame ZIP."
+    } else if lower.contains("no preview frames") {
+        "No preview frames were produced. Try another timeline position or relink the source."
+    } else if lower.contains("ffmpeg preview failed") {
+        "The media tool could not render this preview. Open Details for the cause."
+    } else {
+        error
+            .lines()
+            .next()
+            .unwrap_or("Preview could not be prepared")
+    };
+    let logs = root.join("diagnostics");
+    let log = logs.join(format!(
+        "preview-{}.log",
+        dir.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let write = (|| -> std::io::Result<()> {
+        std::fs::create_dir_all(&logs)?;
+        let text = format!(
+            "Frame preview failure\nFFmpeg: {}\n\n{error}\n\nFFmpeg output:\n{}\n\nFilter graph:\n{}",
+            crate::process::tool("ffmpeg").display(),
+            log_tail(&dir.join("video.log"), 16 * 1024),
+            log_tail(&dir.join("video/filters.txt"), 32 * 1024)
+        );
+        // The error is bounded too; build-graph errors can include source names.
+        std::fs::write(&log, text.chars().take(80 * 1024).collect::<String>())?;
+        let mut old: Vec<_> = std::fs::read_dir(&logs)?
+            .filter_map(Result::ok)
+            .filter(|e| {
+                e.file_name().to_string_lossy().starts_with("preview-")
+                    && e.path().extension().is_some_and(|e| e == "log")
+            })
+            .collect();
+        old.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+        let remove = old.len().saturating_sub(5);
+        for entry in old.into_iter().take(remove) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+        Ok(())
+    })();
+    let location = match write {
+        Ok(()) => format!("Diagnostic log: {}", log.display()),
+        Err(e) => format!("Could not save a diagnostic log: {e}"),
+    };
+    format!("Preview failed: {summary}\n\n{location}\n\n{error}")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn missing_codec_hint_does_not_confuse_other_png_inputs() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("job");
+        let positive = super::preserve_failure(
+            root.path(),
+            &dir,
+            "Decoding requested, but no decoder found for: png",
+        );
+        assert!(positive.contains("cannot decode PNG images"));
+        let unrelated = super::preserve_failure(
+            root.path(),
+            &dir,
+            "Input 0: original.png\nDecoding requested, but no decoder found for: hevc",
+        );
+        assert!(!unrelated.contains("cannot decode PNG images"));
+        assert!(unrelated.contains("no decoder found for: hevc"));
     }
 }

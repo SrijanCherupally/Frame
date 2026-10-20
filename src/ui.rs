@@ -112,6 +112,7 @@ pub struct FrameApp {
     saved: String,
     export_window: bool,
     settings_window: bool,
+    preview_error_window: bool,
     theme_window: bool,
     motion_window: bool,
     vfx: effects::VfxState,
@@ -289,6 +290,7 @@ impl FrameApp {
             saved: "All changes saved".into(),
             export_window: false,
             settings_window: false,
+            preview_error_window: false,
             theme_window: false,
             motion_window: false,
             vfx: effects::VfxState::default(),
@@ -1672,6 +1674,8 @@ impl FrameApp {
                         egui::Align2::CENTER_CENTER,
                         if self.preview_running {
                             "Preparing preview…"
+                        } else if !self.last_error.is_empty() {
+                            "Preview unavailable"
                         } else {
                             "Your story starts here"
                         },
@@ -1700,10 +1704,28 @@ impl FrameApp {
                     ui.painter().text(
                         rect.left_bottom() + Vec2::new(12., -30.),
                         egui::Align2::LEFT_CENTER,
-                        self.last_error.chars().take(100).collect::<String>(),
+                        self.last_error
+                            .lines()
+                            .next()
+                            .unwrap_or("Preview failed")
+                            .chars()
+                            .take(100)
+                            .collect::<String>(),
                         egui::FontId::proportional(11.),
                         Color32::LIGHT_RED,
                     );
+                }
+
+                if !self.last_error.is_empty() {
+                    ui.horizontal(|ui| {
+                        if ui.button("Preview error details…").clicked() {
+                            self.preview_error_window = true;
+                        }
+                        if ui.button("Retry preview").clicked() {
+                            self.preview_error_window = false;
+                            self.preview_dirty = Some(Instant::now() - Duration::from_secs(1));
+                        }
+                    });
                 }
 
                 ui.add_space(12.);
@@ -2695,6 +2717,15 @@ self.property_drag=false;
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        let mut details = self.preview_error_window && !self.last_error.is_empty();
+        egui::Window::new("Preview error details").open(&mut details).default_width(650.).resizable(true).show(ctx, |ui| {
+            ui.label("Copy these details when reporting a preview problem. Diagnostic logs stay in the cache's diagnostics folder (the latest five are retained).");
+            if ui.button("Copy diagnostic details").clicked() { ctx.copy_text(self.last_error.clone()); }
+            egui::ScrollArea::both().max_height(400.).show(ui, |ui| {
+                ui.add(egui::Label::new(RichText::new(&self.last_error).monospace()).selectable(true));
+            });
+        });
+        self.preview_error_window = details;
         let mut open = self.export_window;
 
         egui::Window::new("Let your story take flight").open(&mut open).collapsible(false).resizable(false).default_width(410.).show(ctx,|ui|{
