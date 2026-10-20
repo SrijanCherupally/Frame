@@ -1,5 +1,6 @@
 mod acceleration;
 mod animation;
+mod context;
 mod effects;
 mod theme;
 mod tools;
@@ -119,6 +120,11 @@ pub struct FrameApp {
     motion_key: usize,
     motion_settings: presets::MotionSettings,
     animation_clipboard: Option<Clip>,
+    clip_clipboard: Option<Clip>,
+    clipboard_text: Option<String>,
+    rename_clip: Option<(String, String)>,
+    media_details: Option<Asset>,
+    timeline_context: (f64, usize),
     workspace: WorkMode,
     theme: Theme,
     applied_theme: Option<Theme>,
@@ -297,6 +303,11 @@ impl FrameApp {
             motion_key: 0,
             motion_settings: presets::MotionSettings::default(),
             animation_clipboard: None,
+            clip_clipboard: None,
+            clipboard_text: None,
+            rename_clip: None,
+            media_details: None,
+            timeline_context: (0., 1),
             workspace: WorkMode::Edit,
             theme,
             applied_theme: None,
@@ -324,7 +335,9 @@ impl FrameApp {
         style.visuals.panel_fill = palette().panel;
         style.visuals.window_fill = palette().panel;
         style.visuals.override_text_color = Some(palette().text);
-        style.visuals.window_corner_radius = egui::CornerRadius::same(14);
+        style.visuals.window_corner_radius = egui::CornerRadius::same(12);
+        style.visuals.window_highlight_topmost = false;
+        style.visuals.menu_corner_radius = egui::CornerRadius::same(10);
         style.visuals.window_stroke = Stroke::new(1.0_f32, palette().border);
         style.visuals.window_shadow = egui::epaint::Shadow {
             offset: [0, 12],
@@ -358,13 +371,14 @@ impl FrameApp {
             widget.corner_radius = egui::CornerRadius::same(7);
             widget.bg_fill = color;
             widget.weak_bg_fill = color;
-            widget.bg_stroke = Stroke::new(1.0_f32, palette().border);
+            widget.bg_stroke = Stroke::NONE;
             widget.fg_stroke = Stroke::new(1.0_f32, palette().text);
         }
 
-        style.spacing.item_spacing = Vec2::new(9., 9.);
+        style.spacing.item_spacing = Vec2::new(10., 8.);
 
-        style.spacing.button_padding = Vec2::new(10., 6.);
+        style.spacing.button_padding = Vec2::new(11., 7.);
+        style.spacing.menu_margin = egui::Margin::same(8);
 
         style
             .text_styles
@@ -376,7 +390,7 @@ impl FrameApp {
 
         style
             .text_styles
-            .insert(egui::TextStyle::Small, egui::FontId::proportional(10.));
+            .insert(egui::TextStyle::Small, egui::FontId::proportional(11.));
 
         ctx.set_style(style);
 
@@ -1025,6 +1039,30 @@ impl FrameApp {
         }
 
         ctx.input(|i| {
+            for (key, action, native) in [
+                (
+                    egui::Key::C,
+                    context::ClipCommand::Copy,
+                    i.events.iter().any(|e| matches!(e, egui::Event::Copy)),
+                ),
+                (
+                    egui::Key::X,
+                    context::ClipCommand::Cut,
+                    i.events.iter().any(|e| matches!(e, egui::Event::Cut)),
+                ),
+                (egui::Key::D, context::ClipCommand::Duplicate, false),
+            ] {
+                if (native || (i.modifiers.command && i.key_pressed(key)))
+                    && let Some(id) = self.selected.clone()
+                {
+                    self.clip_command(&id, action);
+                }
+            }
+            if (i.modifiers.command && i.key_pressed(egui::Key::V))
+                || i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
+            {
+                self.paste_clip(self.time, None);
+            }
             if i.key_pressed(egui::Key::Space) {
                 self.toggle_play();
             }
@@ -1067,9 +1105,10 @@ impl FrameApp {
 
     fn top(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top")
-            .exact_height(64.)
+            .exact_height(56.)
             .frame(surface(palette().rail, 12))
             .show(ctx, |ui| {
+                ui.visuals_mut().widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
                 ui.horizontal_centered(|ui| {
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(27., 26.), Sense::hover());
 
@@ -1084,9 +1123,9 @@ impl FrameApp {
                         );
                     }
 
-                    ui.label(RichText::new("frame").size(26.).strong());
+                    ui.label(RichText::new("frame").size(23.).strong());
 
-                    ui.label(RichText::new("STUDIO").size(9.).color(palette().accent));
+                    ui.add_space(4.);
 
                     ui.separator();
 
@@ -1142,7 +1181,7 @@ impl FrameApp {
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new("Export video  ↑").color(palette().on_accent()),
+                                    RichText::new("Export video").color(palette().on_accent()),
                                 )
                                 .fill(palette().accent),
                             )
@@ -1195,7 +1234,7 @@ impl FrameApp {
                 ui.style_mut().spacing.button_padding.x = 3.;
                 ui.add_space(12.);
 
-                for (tab, icon, name, accent) in [
+                for (tab, icon, name, _accent) in [
                     (Tab::Media, "▣", "Media", palette().accent),
                     (Tab::Audio, "♫", "Audio", palette().cyan),
                     (Tab::Text, "T", "Text", palette().violet),
@@ -1205,18 +1244,18 @@ impl FrameApp {
                     (Tab::Effects, "≋", "Effects", palette().coral),
                 ] {
                     let response = ui.add_sized(
-                        [70., 62.],
+                        [70., 58.],
                         egui::Button::new(
                             RichText::new(format!("{icon}\n{name}")).size(11.).color(
                                 if self.tab == tab {
-                                    accent
+                                    palette().text
                                 } else {
                                     palette().muted
                                 },
                             ),
                         )
                         .fill(if self.tab == tab {
-                            mix(palette().rail, accent, 0.2)
+                            mix(palette().rail, palette().accent, 0.10)
                         } else {
                             palette().rail
                         })
@@ -1226,9 +1265,9 @@ impl FrameApp {
                     if self.tab == tab {
                         let r = Rect::from_min_size(
                             response.rect.left_top() + Vec2::new(1., 13.),
-                            Vec2::new(3., 36.),
+                            Vec2::new(2., 26.),
                         );
-                        ui.painter().rect_filled(r, 2., accent);
+                        ui.painter().rect_filled(r, 2., palette().accent);
                     }
                     if response.clicked() {
                         self.tab = tab;
@@ -1243,7 +1282,7 @@ impl FrameApp {
             .max_width(370.)
             .show(ctx, |ui| {
                 ui.set_min_width(ui.available_width());
-                ui.add_space(15.);
+                ui.add_space(8.);
 
                 ui.heading(match self.tab {
                     Tab::Media => "Project media",
@@ -1257,21 +1296,15 @@ impl FrameApp {
 
                 ui.label(
                     RichText::new(match self.tab {
-                        Tab::Media | Tab::Audio => "COLLECT & ARRANGE",
-                        Tab::Text => "WORDS THAT LAND",
-                        Tab::Graphics => "EXPLAIN & ILLUSTRATE",
-                        Tab::Motion => "BRING IT TO LIFE",
-                        Tab::Transitions => "CONNECT YOUR SCENES",
-                        Tab::Effects => "THE FINISHING TOUCH",
+                        Tab::Media | Tab::Audio => "Video, audio and images",
+                        Tab::Text => "Titles and typography",
+                        Tab::Graphics => "Shapes, charts and scenes",
+                        Tab::Motion => "Animation and keyframes",
+                        Tab::Transitions => "Between your scenes",
+                        Tab::Effects => "Color and finishing",
                     })
-                    .size(9.)
-                    .color(match self.tab {
-                        Tab::Audio => palette().cyan,
-                        Tab::Text | Tab::Motion => palette().violet,
-                        Tab::Graphics => palette().amber,
-                        Tab::Effects => palette().coral,
-                        _ => palette().accent,
-                    }),
+                    .size(11.)
+                    .color(palette().muted),
                 );
                 ui.add_space(13.);
 
@@ -1280,9 +1313,9 @@ impl FrameApp {
                         .add_sized(
                             [ui.available_width(), 34.],
                             egui::Button::new(
-                                RichText::new("+  Import media").color(palette().on_accent()),
+                                RichText::new("+  Import media").color(palette().text),
                             )
-                            .fill(palette().cyan),
+                            .fill(palette().control),
                         )
                         .clicked()
                     {
@@ -1383,6 +1416,8 @@ impl FrameApp {
                                                         ),
                                                         StrokeKind::Inside,
                                                     );
+                                                    response
+                                                        .context_menu(|ui| self.media_menu(ui, a));
                                                     if response.double_clicked() {
                                                         self.add_asset(&a.id, None, None);
                                                     }
@@ -1627,7 +1662,7 @@ impl FrameApp {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("●").color(palette().accent).size(9.));
 
-                    ui.label(RichText::new("Program monitor").strong());
+                    ui.label(RichText::new("Preview").strong());
 
                     ui.label(
                         RichText::new(format!("{} × {}", self.project.width, self.project.height))
@@ -1637,7 +1672,7 @@ impl FrameApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("DRAFT PREVIEW")
+                            RichText::new("Draft quality")
                                 .size(9.)
                                 .color(palette().muted),
                         );
@@ -1660,6 +1695,34 @@ impl FrameApp {
                 let rect = Rect::from_center_size(area.center(), Vec2::new(width, height));
 
                 ui.painter().rect_filled(rect, 4., Color32::BLACK);
+                ui.interact(rect, ui.id().with("viewer_menu"), Sense::click())
+                    .context_menu(|ui| {
+                        if ui
+                            .button(if self.playing { "Pause" } else { "Play" })
+                            .clicked()
+                        {
+                            self.toggle_play();
+                            ui.close();
+                        }
+                        if ui.button("Go to beginning").clicked() {
+                            self.seek(0.);
+                            ui.close();
+                        }
+                        if ui.button("Refresh preview").clicked() {
+                            self.preview_dirty = Some(Instant::now() - Duration::from_secs(1));
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Project settings…").clicked() {
+                            self.settings_window = true;
+                            ui.close();
+                        }
+                        if ui.button("Export video…").clicked() {
+                            self.export_size = [self.project.width, self.project.height];
+                            self.export_window = true;
+                            ui.close();
+                        }
+                    });
 
                 if let Some(texture) = &self.preview_texture {
                     ui.painter().image(
@@ -2434,7 +2497,7 @@ self.property_drag=false;
                                 painter.rect_filled(
                                     clip_rect,
                                     5.,
-                                    mix(palette().card, color, if selected { 0.38 } else { 0.23 }),
+                                    mix(palette().card, color, if selected { 0.26 } else { 0.12 }),
                                 );
                                 if clip_rect.height() > 8. {
                                     painter.rect_filled(
@@ -2455,7 +2518,7 @@ self.property_drag=false;
                                         if selected {
                                             palette().accent
                                         } else {
-                                            color.gamma_multiply(0.7)
+                                            palette().border
                                         },
                                     ),
                                     StrokeKind::Inside,
@@ -2466,7 +2529,7 @@ self.property_drag=false;
                                         clip_rect.left_center() + Vec2::new(7., 0.),
                                         egui::Align2::LEFT_CENTER,
                                         &c.name,
-                                        egui::FontId::proportional(10.),
+                                        egui::FontId::proportional(11.),
                                         palette().text,
                                     );
                                 }
@@ -2501,9 +2564,8 @@ self.property_drag=false;
                                     Sense::click_and_drag(),
                                 );
 
-                                if response.clicked() {
-                                    self.select(c.id.clone());
-                                }
+                                if response.clicked() || response.secondary_clicked() { self.select(c.id.clone()); }
+                                response.context_menu(|ui|self.clip_menu(ui,c));
 
                                 if response.drag_started() {
                                     self.history.remember(&self.project);
@@ -2642,6 +2704,10 @@ self.property_drag=false;
                                 }
                             }
 
+                            if response.secondary_clicked() && let Some(pos)=response.interact_pointer_pos(){
+                                self.timeline_context=((((pos.x-origin.x)/self.zoom) as f64).max(0.),((pos.y-origin.y-ruler)/row).floor().clamp(0.,4.) as usize);
+                            }
+                            response.context_menu(|ui|self.timeline_menu(ui));
                             if response.clicked()
                                 && let Some(pos) = response.interact_pointer_pos()
                             {
@@ -2717,6 +2783,7 @@ self.property_drag=false;
     }
 
     fn dialogs(&mut self, ctx: &egui::Context) {
+        self.context_dialogs(ctx);
         let mut details = self.preview_error_window && !self.last_error.is_empty();
         egui::Window::new("Preview error details").open(&mut details).default_width(650.).resizable(true).show(ctx, |ui| {
             ui.label("Copy these details when reporting a preview problem. Diagnostic logs stay in the cache's diagnostics folder (the latest five are retained).");
@@ -2728,8 +2795,8 @@ self.property_drag=false;
         self.preview_error_window = details;
         let mut open = self.export_window;
 
-        egui::Window::new("Let your story take flight").open(&mut open).collapsible(false).resizable(false).default_width(410.).show(ctx,|ui|{
-ui.label(RichText::new("READY FOR LIFTOFF").small().color(palette().accent));
+        egui::Window::new("Export video").open(&mut open).collapsible(false).resizable(false).default_width(410.).show(ctx,|ui|{
+ui.label(RichText::new("Output settings").small().color(palette().muted));
 ui.add_space(10.);
 ui.label("Render from your originals. MP4 · H.264 · AAC.");
 ui.label(RichText::new(format!("{}  /  {} fps  /  {} clips",timecode(self.project.duration(),self.project.fps),self.project.fps,self.project.clips.len())).small().color(palette().muted));
@@ -2992,6 +3059,9 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
         self.viewer(ctx);
 
         self.dialogs(ctx);
+        if let Some(text) = self.clipboard_text.take() {
+            ctx.copy_text(text);
+        }
         self.format_dialog(ctx);
         self.theme_dialog(ctx);
         self.animation_studio(ctx);

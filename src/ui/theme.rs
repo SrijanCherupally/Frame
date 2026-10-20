@@ -65,7 +65,7 @@ impl Theme {
     }
     pub fn description(self) -> &'static str {
         match self {
-            Self::Midnight => "Navy & electric blue",
+            Self::Midnight => "Quiet charcoal & soft blue",
             Self::Graphite => "Charcoal & warm gold",
             Self::Amethyst => "Deep purple & lavender",
             Self::Forest => "Evergreen & sea glass",
@@ -75,20 +75,20 @@ impl Theme {
     pub fn colors(self) -> Palette {
         match self {
             Self::Midnight => Palette {
-                accent: rgb(123, 163, 255),
-                cyan: rgb(86, 218, 224),
-                violet: rgb(190, 162, 255),
-                amber: rgb(255, 198, 117),
-                coral: rgb(255, 147, 156),
-                success: rgb(114, 220, 174),
-                text: rgb(238, 244, 255),
-                muted: rgb(162, 180, 207),
-                canvas: rgb(10, 15, 26),
-                rail: rgb(14, 21, 35),
-                panel: rgb(24, 33, 50),
-                card: rgb(34, 46, 67),
-                control: rgb(45, 59, 83),
-                border: rgb(60, 77, 104),
+                accent: rgb(188, 205, 244),
+                cyan: rgb(147, 190, 195),
+                violet: rgb(183, 170, 209),
+                amber: rgb(209, 186, 147),
+                coral: rgb(215, 156, 163),
+                success: rgb(151, 193, 169),
+                text: rgb(235, 235, 239),
+                muted: rgb(151, 153, 163),
+                canvas: rgb(18, 18, 21),
+                rail: rgb(23, 23, 27),
+                panel: rgb(28, 28, 33),
+                card: rgb(35, 35, 41),
+                control: rgb(43, 43, 50),
+                border: rgb(54, 54, 63),
                 light: false,
             },
             Self::Graphite => Palette {
@@ -187,17 +187,10 @@ pub(super) fn surface(color: Color32, padding: i8) -> egui::Frame {
     egui::Frame::new()
         .fill(color)
         .inner_margin(padding)
-        .stroke(Stroke::new(1.0_f32, palette().border.gamma_multiply(0.65)))
+        .stroke(Stroke::new(1.0_f32, palette().border.gamma_multiply(0.5)))
 }
 pub(super) fn card() -> egui::Frame {
-    surface(palette().card, 12)
-        .corner_radius(10.)
-        .shadow(egui::epaint::Shadow {
-            offset: [0, 3],
-            blur: 8,
-            spread: 0,
-            color: Color32::from_black_alpha(35),
-        })
+    surface(palette().card, 12).corner_radius(10.)
 }
 pub(super) fn section_title(ui: &mut egui::Ui, title: &str, color: Color32) {
     ui.horizontal(|ui| {

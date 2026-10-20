@@ -2,11 +2,13 @@
 
 Frame is now a compiled **Rust desktop application**. It uses **egui/eframe** for a native GPU-rendered interface and **FFmpeg** for decoding, filtering, audio mixing, and export. There is no Electron, browser engine, JavaScript, npm, Node.js, Python service, HTTP server, or web build step in the application.
 
-[Workspace preview](docs/screenshots/workspace.png) · [Format templates](docs/screenshots/formats.png) · [Explanation graphics](docs/screenshots/graphics.png) · [Themes](docs/screenshots/themes.png) · [Graphite](docs/screenshots/graphite.png) · [Light theme](docs/screenshots/dawn.png) · [Rendered rocket scene](docs/screenshots/explanation.png)
+[Workspace preview](docs/screenshots/workspace.png) · [Right-click tools](docs/screenshots/context-menu.png) · [Format templates](docs/screenshots/formats.png) · [Explanation graphics](docs/screenshots/graphics.png) · [Themes](docs/screenshots/themes.png) · [Graphite](docs/screenshots/graphite.png) · [Light theme](docs/screenshots/dawn.png) · [Rendered rocket scene](docs/screenshots/explanation.png)
 
 The workspace follows familiar professional editing conventions: project assets at the left, the program monitor in the center, effect controls at the right, and the layered timeline below. **Edit, Color, Audio, and Motion** workspace buttons open their relevant tools. Raised cards, contrasting panel depths, selection indicators, and consistent track colors make the hierarchy easier to scan.
 
 Choose **Theme** in the toolbar for **Midnight, Graphite, Amethyst, Forest, or Dawn**. Graphite uses neutral charcoal and warm gold; Dawn provides a light option. Theme choices persist between launches and affect only the interface, never exported footage or graphics.
+
+The default Midnight theme now uses neutral charcoal surfaces, quiet borders and softer accent colors, with flatter controls and cleaner typography. Right-click a **timeline clip** for split/cut/copy/duplicate, rename, track placement, audio controls, animation tools, resets and delete. Right-click **empty timeline space** to paste at that position or add a title; right-click **media thumbnails** for placement, source paths, relinking and details; right-click the **preview** for playback and output options. Clip changes support Undo. Ctrl+C/X/V/D copy, cut, paste at the playhead and duplicate when you are not editing text. Context-menu paste respects visual/audio track types; source files are never deleted by these actions.
 
 The previous Electron implementation is preserved in Git history at `2a3d1b4`. The current source replaces it rather than wrapping it.
 

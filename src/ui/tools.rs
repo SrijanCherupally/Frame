@@ -366,7 +366,7 @@ impl FrameApp {
             .frame(surface(palette().panel, 7))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("WORKSPACE").size(9.).color(palette().muted));
+                    ui.label(RichText::new("Workspace").size(9.).color(palette().muted));
                     ui.add_space(12.);
                     for (workspace, label, color) in [
                         (WorkMode::Edit, "Edit", palette().accent),
@@ -383,15 +383,11 @@ impl FrameApp {
                                     palette().muted
                                 }))
                                 .fill(if active {
-                                    mix(palette().card, color, 0.2)
+                                    mix(palette().card, color, 0.1)
                                 } else {
                                     palette().panel
                                 })
-                                .stroke(if active {
-                                    Stroke::new(1.0_f32, color)
-                                } else {
-                                    Stroke::NONE
-                                })
+                                .stroke(Stroke::NONE)
                                 .min_size(Vec2::new(70., 24.)),
                             )
                             .clicked()
@@ -401,7 +397,7 @@ impl FrameApp {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.label(
-                            RichText::new("PROJECT  /  PROGRAM  /  TIMELINE")
+                            RichText::new("Right-click clips for editing tools")
                                 .size(9.)
                                 .color(palette().muted),
                         );

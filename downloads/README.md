@@ -6,6 +6,8 @@ Choose **Extract All**, then double-click **Frame.exe**. FFmpeg, FFprobe and FFp
 
 **Preview fix:** use this complete updated ZIP to replace the older media tools that lacked PNG support. Replacing only Frame.exe does not repair that codec omission. Preview errors now have Details and Retry controls.
 
+**Workspace update:** a quieter charcoal theme, flatter controls and right-click menus for clips, media, empty timeline space and the preview. Copy/cut/paste, rename, track placement, animation tools and resets are available from the clip menu, with Undo.
+
 Use **Theme** to choose Midnight, Graphite, Amethyst, Forest or Dawn (light), and the Edit / Color / Audio / Motion workspaces for focused editing controls.
 
 **Motion Studio** adds editable timing curves, Bézier paths, reusable animation and smooth reveals. Graphics now include CSV data charts and seven explanation scenes. See the [reference breakdown and production guide](../docs/animation-guide.md).

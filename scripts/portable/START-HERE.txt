@@ -14,6 +14,12 @@ updating only Frame.exe cannot fix that. Preview error details and Retry
 are available under the monitor; recent logs stay in the cache diagnostics
 folder. Your projects and linked originals are preserved.
 
+Right-click timeline clips for editing, clipboard, rename, track and
+animation tools. Right-click empty timeline space to paste at that point
+or add a title. Media thumbnails and the preview have context menus too.
+Ctrl+C / X / V / D copy, cut, paste and duplicate outside text fields.
+Edits support Undo. The default theme now uses quieter neutral surfaces.
+
 Choose Theme in the top bar for Midnight, Graphite, Amethyst, Forest or
 Dawn (light). Your choice is saved on this device and never changes video
 colors. Use Edit, Color, Audio and Motion workspaces for focused controls.
