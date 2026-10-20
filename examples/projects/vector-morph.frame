@@ -1,0 +1,190 @@
+{
+  "format": "frame-project",
+  "version": 1,
+  "project": {
+    "version": 1,
+    "name": "Vector morph",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "clips": [
+      {
+        "id": "1fb27cff-6da6-4169-ae08-6909f4e97eb5",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "Vector morph",
+        "track": 0,
+        "start": 0.0,
+        "duration": 5.0,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 50.0,
+        "y": 50.0,
+        "scale": 1.0,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "none",
+        "reveal_duration": 1.2,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "Your story starts here",
+        "font_size": 64,
+        "color": "#56dae0",
+        "graphic": "arrow",
+        "stroke_width": 10.0,
+        "fill": true,
+        "secondary_color": "#164b65",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [],
+        "vector": {
+          "nodes": [
+            {
+              "point": [
+                50.0,
+                15.0
+              ],
+              "incoming": [
+                50.0,
+                15.0
+              ],
+              "outgoing": [
+                50.0,
+                15.0
+              ]
+            },
+            {
+              "point": [
+                80.0,
+                50.0
+              ],
+              "incoming": [
+                80.0,
+                50.0
+              ],
+              "outgoing": [
+                80.0,
+                50.0
+              ]
+            },
+            {
+              "point": [
+                50.0,
+                85.0
+              ],
+              "incoming": [
+                50.0,
+                85.0
+              ],
+              "outgoing": [
+                50.0,
+                85.0
+              ]
+            },
+            {
+              "point": [
+                20.0,
+                50.0
+              ],
+              "incoming": [
+                20.0,
+                50.0
+              ],
+              "outgoing": [
+                20.0,
+                50.0
+              ]
+            }
+          ],
+          "target": [
+            {
+              "point": [
+                25.0,
+                25.0
+              ],
+              "incoming": [
+                25.0,
+                25.0
+              ],
+              "outgoing": [
+                25.0,
+                25.0
+              ]
+            },
+            {
+              "point": [
+                75.0,
+                25.0
+              ],
+              "incoming": [
+                75.0,
+                25.0
+              ],
+              "outgoing": [
+                75.0,
+                25.0
+              ]
+            },
+            {
+              "point": [
+                75.0,
+                75.0
+              ],
+              "incoming": [
+                75.0,
+                75.0
+              ],
+              "outgoing": [
+                75.0,
+                75.0
+              ]
+            },
+            {
+              "point": [
+                25.0,
+                75.0
+              ],
+              "incoming": [
+                25.0,
+                75.0
+              ],
+              "outgoing": [
+                25.0,
+                75.0
+              ]
+            }
+          ],
+          "closed": true,
+          "draw_duration": 0.0,
+          "morph_duration": 3.0,
+          "stroke_start": 0.0,
+          "stroke_end": 1.0
+        },
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
+      }
+    ],
+    "muted_tracks": [],
+    "hidden_tracks": [],
+    "motion_blur_samples": 2,
+    "motion_shutter": 0.5
+  },
+  "media": [],
+  "workspace": {
+    "playhead": 1.0,
+    "zoom": 100.0,
+    "selected": "1fb27cff-6da6-4169-ae08-6909f4e97eb5"
+  }
+}

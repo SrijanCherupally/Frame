@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "c02731ba-f79c-45b2-ad27-77213dfcc8c6",
+        "id": "9685e0a5-9efc-48e4-9cb4-d3ec41856e1e",
         "asset_id": null,
         "kind": "graphic",
         "name": "CONTROL INPUT",
@@ -112,10 +112,14 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "141bf77e-27b7-4363-b123-0a3af57a922e",
+        "id": "a15a6883-10cb-4799-a197-1424d8b4d587",
         "asset_id": null,
         "kind": "graphic",
         "name": "ATTITUDE RESPONSE",
@@ -218,16 +222,22 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "c02731ba-f79c-45b2-ad27-77213dfcc8c6"
+    "selected": "9685e0a5-9efc-48e4-9cb4-d3ec41856e1e"
   }
 }

@@ -17,6 +17,11 @@ reusable animations and smooth reveals. Graphics > Data curve can import
 a time/value CSV. Mask > Text places footage inside large lettering.
 See docs/animation-guide.md for the timestamped reference breakdown.
 
+Graphics > Vector Studio / 3D Studio opens editable paths and 3D scenes.
+Motion > Tracking / Motion blur opens tracking and animation shutter blur.
+Try the VFX example projects in Templates and Templates/VFX.
+See docs/vfx-guide.md for the supported workflows and limits.
+
 Open a .frame project from Templates to try explanation graphics.
 Use the project menu > New project for resolution/fps templates.
 Import footage, then double-click it or drag it onto the timeline.

@@ -58,6 +58,7 @@ fn pieces(c: &Clip, offset: f64) -> (Clip, Clip) {
         right.keyframes = slice_keyframes(c, offset, c.duration);
     }
     right.reveal_offset += offset;
+    right.content_offset += offset * c.content_rate;
 
     (left, right)
 }
@@ -175,6 +176,8 @@ pub fn add_keyframe(c: &mut Clip, local: f64, fps: u32) {
     insert_exact(c, t);
 }
 pub fn reverse_animation(c: &mut Clip) {
+    c.content_offset += c.duration * c.content_rate;
+    c.content_rate = -c.content_rate;
     let keys = slice_keyframes(c, 0., c.duration);
     if keys.is_empty() {
         return;
@@ -213,6 +216,10 @@ pub fn paste_animation(source: &Clip, target: &mut Clip) {
     target.reveal = source.reveal;
     target.reveal_duration = source.reveal_duration * ratio;
     target.reveal_offset = source.reveal_offset * ratio;
+    if target.vector.is_some() || target.scene3d.is_some() {
+        target.content_rate = source.content_rate / ratio;
+        target.content_offset = source.content_offset;
+    }
 }
 
 /// Separate source audio for independent J/L cuts without duplicating its sound.

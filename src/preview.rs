@@ -2,7 +2,7 @@ use crate::{
     media::Asset,
     model::Project,
     process::{ProcessGroup, command},
-    render::{Mode, build_graph},
+    render::{Mode, build_graph_cancel},
 };
 use crossbeam_channel::{Receiver, Sender, bounded};
 use std::{
@@ -107,13 +107,14 @@ impl Preview {
                 } else {
                     1. / p.fps as f64
                 };
-                let graph = build_graph(
+                let graph = build_graph_cancel(
                     &p,
                     &assets,
                     &dir.join("video"),
                     time,
                     duration,
                     Mode::PreviewVideo,
+                    &group,
                 )?;
                 let mut cmd = graph.command();
                 cmd.args([
@@ -144,13 +145,14 @@ impl Preview {
                     })
                 {
                     // FFplay is an optional native audio output device; video and export never depend on it.
-                    if let Ok(aud) = build_graph(
+                    if let Ok(aud) = build_graph_cancel(
                         &p,
                         &assets,
                         &dir.join("audio"),
                         time,
                         duration,
                         Mode::PreviewAudio,
+                        &group,
                     ) {
                         let mut cmd = aud.command();
                         cmd.args(["-vn", "-f", "s16le", "-ar", "48000", "-ac", "2", "pipe:1"]);

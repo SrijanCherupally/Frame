@@ -75,6 +75,14 @@ The graphics library now includes eighteen types and seven staggered explanation
 
 See the **[timestamped reference breakdown and practical production guide](docs/animation-guide.md)** for the uploaded self-landing-satellite video, feature mappings, instructions, and precise limits. [Motion Studio screenshot](docs/screenshots/animation.png).
 
+## Tracking, vectors, 3D and animation blur
+
+**VFX Studio** adds real point tracking with confidence/loss handling; editable cubic vector paths, stroke drawing, SVG geometry import/export and matched-node morphing; perspective 3D scenes with primitives, small OBJ meshes, object/camera keys and shaded previews; and 2/4/8-sample animation motion blur with 36–360° shutter control.
+
+Open **Graphics → Vector Studio / 3D Studio**, or **Motion → Tracking / Motion blur**. The Windows package includes editable VFX example projects, original SVG/OBJ geometry and a tracking-practice video/project. All procedural geometry and animation data live in `.frame` documents.
+
+Read the **[VFX workflows, supported formats, performance details and limits](docs/vfx-guide.md)**. [3D scene editor](docs/screenshots/3d.png) · [Vector editor](docs/screenshots/vectors.png) · [Tracking](docs/screenshots/tracking.png).
+
 ## Editing workflow
 
 The app opens an original illustrated rocket project so its controls can be tried immediately. Demo images are sample artwork rather than camera footage.
@@ -137,6 +145,8 @@ cargo build --locked --release
 
 The tests include:
 
+- VFX geometry/morphs, encoded-video point tracking and loss handling, procedural cancellation, sub-frame exposure pixel comparisons, 3D/vector rendering, project round trips and output frame counts.
+
 - Continuous easing and Bézier paths preserved through key insertion, split, ripple deletion, trim, retime, reversal, fitted paste and JSON round trips; malformed curves/CSV; independent audio detachment.
 - Real rendered animation frames and seeks compared to model samples, reveals in preview/export, footage-filled text mattes, data-driven chart pixels and dense key tracks.
 
@@ -167,6 +177,8 @@ For a native-window smoke test in a graphical session:
 ./target/release/frame --ui-smoke formats.png formats
 ./target/release/frame --ui-smoke themes.png themes
 ./target/release/frame --ui-smoke animation.png animation
+./target/release/frame --ui-smoke vectors.png vectors
+./target/release/frame --ui-smoke 3d.png 3d
 ./target/release/frame --ui-smoke graphite.png graphite
 ./target/release/frame --ui-smoke dawn.png dawn
 ```
@@ -175,12 +187,14 @@ This launches the actual OpenGL native window, requests a framebuffer screenshot
 
 ## Current limits
 
-Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, motion tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, nested/parented motion compositions, vector stroke tracing/morphing, 3D scenes, transform motion blur, synchronized telemetry channels, plugins, collaboration, an MCP server, hardware video acceleration, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
+Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, planar/camera/semantic tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, nested/parented motion compositions, full SVG documents, textured/rigged 3D scenes, synchronized telemetry channels, plugins, collaboration, an MCP server, hardware video acceleration, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
 
 ## Source layout
 
 - `src/ui.rs`: native workspace, inspector, timeline, dialogs, asynchronous job coordination.
 - `src/animation.rs`, `src/ui/animation.rs`: easing, Bézier paths, CSV validation and native Motion Studio.
+- `src/vector.rs`, `src/scene3d.rs`, `src/procedural.rs`: vector geometry/morphing, perspective scenes and bounded source rendering.
+- `src/tracking.rs`, `src/ui/effects.rs`: confidence-based point tracking and native VFX Studio.
 - `src/ui/theme.rs`: centralized contrast palette, semantic accents, surfaces and raised cards.
 - `src/model.rs`, `src/edit.rs`: validated project format and pure edit operations.
 - `src/media.rs`: disk-linked media probing, thumbnail/proxy preparation, embedded demo assets.

@@ -1,4 +1,5 @@
 mod animation;
+mod effects;
 mod theme;
 mod tools;
 use theme::*;
@@ -108,6 +109,7 @@ pub struct FrameApp {
     settings_window: bool,
     theme_window: bool,
     motion_window: bool,
+    vfx: effects::VfxState,
     motion_key: usize,
     motion_settings: presets::MotionSettings,
     animation_clipboard: Option<Clip>,
@@ -279,6 +281,7 @@ impl FrameApp {
             settings_window: false,
             theme_window: false,
             motion_window: false,
+            vfx: effects::VfxState::default(),
             motion_key: 0,
             motion_settings: presets::MotionSettings::default(),
             animation_clipboard: None,
@@ -2577,6 +2580,7 @@ self.property_drag=false;
                                         );
                                         edited.reveal_offset =
                                             (original.reveal_offset + delta).max(0.);
+                                        edited.content_offset=original.content_offset+delta*original.content_rate;
                                     }
 
                                     if let Some(index) =
@@ -2933,6 +2937,7 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
         self.format_dialog(ctx);
         self.theme_dialog(ctx);
         self.animation_studio(ctx);
+        self.effects_studio(ctx);
     }
 }
 
@@ -3285,6 +3290,25 @@ mod tests {
         });
         assert!(out.shapes.len() > 100);
         assert_eq!(app.project, original);
+    }
+
+    #[test]
+    fn vfx_studio_draws_vectors_scene_tracking_and_blur_without_changing_content() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut app = FrameApp::new(Storage::open(temp.path().into()).unwrap()).unwrap();
+        let ctx = egui::Context::default();
+        for view in ["vectors", "3d", "tracking", "blur"] {
+            app.prepare_smoke_view(view).unwrap();
+            let before = app.project.clone();
+            for _ in 0..3 {
+                let output = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+                    app.draw(ctx)
+                });
+                assert!(output.shapes.len() > 50);
+            }
+            assert_eq!(app.project, before);
+            app.project.validate().unwrap();
+        }
     }
 
     #[test]

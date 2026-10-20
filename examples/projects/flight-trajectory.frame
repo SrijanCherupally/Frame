@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "95aa321f-2328-4d44-8fd2-7297dff25aab",
+        "id": "5593ebc3-a214-42ea-808e-c1f10adeced7",
         "asset_id": null,
         "kind": "graphic",
         "name": "CONTROLLED DESCENT",
@@ -112,10 +112,14 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "73a82c00-ba58-45c5-8ee3-e5303ebb8c75",
+        "id": "8e6e5464-ea2b-43c7-8abf-70da3327c59e",
         "asset_id": null,
         "kind": "graphic",
         "name": "LANDING ERROR",
@@ -202,16 +206,22 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "95aa321f-2328-4d44-8fd2-7297dff25aab"
+    "selected": "5593ebc3-a214-42ea-808e-c1f10adeced7"
   }
 }

@@ -1,0 +1,244 @@
+{
+  "format": "frame-project",
+  "version": 1,
+  "project": {
+    "version": 1,
+    "name": "3D rocket assembly",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "clips": [
+      {
+        "id": "618d7dfc-1ada-4a49-95cf-c9ead973cd24",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "3D rocket assembly",
+        "track": 0,
+        "start": 0.0,
+        "duration": 5.0,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 50.0,
+        "y": 50.0,
+        "scale": 1.0,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "none",
+        "reveal_duration": 1.2,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "Your story starts here",
+        "font_size": 64,
+        "color": "#56dae0",
+        "graphic": "arrow",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [],
+        "vector": null,
+        "scene3d": {
+          "objects": [
+            {
+              "name": "Rocket",
+              "primitive": "rocket",
+              "pose": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": 1.0
+              },
+              "spin": [
+                0.0,
+                25.0,
+                0.0
+              ],
+              "color": "#79baff",
+              "mesh": {
+                "vertices": [],
+                "triangles": []
+              },
+              "keys": []
+            },
+            {
+              "name": "Exploded component",
+              "primitive": "cube",
+              "pose": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": 0.3
+              },
+              "spin": [
+                0.0,
+                15.0,
+                0.0
+              ],
+              "color": "#56dae0",
+              "mesh": {
+                "vertices": [],
+                "triangles": []
+              },
+              "keys": [
+                {
+                  "time": 0.0,
+                  "pose": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": 0.3
+                  },
+                  "easing": {
+                    "type": "smoother"
+                  }
+                },
+                {
+                  "time": 2.0,
+                  "pose": {
+                    "position": [
+                      -1.6,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": 0.3
+                  },
+                  "easing": {
+                    "type": "linear"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Exploded component",
+              "primitive": "cube",
+              "pose": {
+                "position": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "rotation": [
+                  0.0,
+                  0.0,
+                  0.0
+                ],
+                "scale": 0.3
+              },
+              "spin": [
+                0.0,
+                15.0,
+                0.0
+              ],
+              "color": "#ffc675",
+              "mesh": {
+                "vertices": [],
+                "triangles": []
+              },
+              "keys": [
+                {
+                  "time": 0.0,
+                  "pose": {
+                    "position": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": 0.3
+                  },
+                  "easing": {
+                    "type": "smoother"
+                  }
+                },
+                {
+                  "time": 2.0,
+                  "pose": {
+                    "position": [
+                      1.6,
+                      0.0,
+                      0.0
+                    ],
+                    "rotation": [
+                      0.0,
+                      0.0,
+                      0.0
+                    ],
+                    "scale": 0.3
+                  },
+                  "easing": {
+                    "type": "linear"
+                  }
+                }
+              ]
+            }
+          ],
+          "camera": {
+            "yaw": 25.0,
+            "pitch": 15.0,
+            "distance": 6.0,
+            "fov": 45.0
+          },
+          "camera_keys": [],
+          "orbit_speed": 8.0,
+          "ambient": 0.3,
+          "wireframe": false,
+          "antialias": true
+        },
+        "content_offset": 0.0,
+        "content_rate": 1.0
+      }
+    ],
+    "muted_tracks": [],
+    "hidden_tracks": [],
+    "motion_blur_samples": 2,
+    "motion_shutter": 0.5
+  },
+  "media": [],
+  "workspace": {
+    "playhead": 1.0,
+    "zoom": 100.0,
+    "selected": "618d7dfc-1ada-4a49-95cf-c9ead973cd24"
+  }
+}

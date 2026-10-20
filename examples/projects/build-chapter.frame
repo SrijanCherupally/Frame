@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "9b00dfe9-6c8c-4505-bcde-3aaa891f3364",
+        "id": "3fc5944c-3206-43ac-8fbb-80e6d79b4656",
         "asset_id": null,
         "kind": "graphic",
         "name": "01",
@@ -96,10 +96,14 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "15a02c47-e3d6-45fb-bf9d-9c72b042764e",
+        "id": "e70de268-4576-426c-ad6e-37206a5930fb",
         "asset_id": null,
         "kind": "graphic",
         "name": "BUILD PROGRESS",
@@ -202,16 +206,22 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "9b00dfe9-6c8c-4505-bcde-3aaa891f3364"
+    "selected": "3fc5944c-3206-43ac-8fbb-80e6d79b4656"
   }
 }

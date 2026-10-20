@@ -1,5 +1,5 @@
 use crate::{
-    animation::{Easing, Reveal},
+    animation::{Easing, Exposure, Reveal},
     media::Asset,
     model::{Clip, Graphic, Keyframe, Kind, Mask, Project, Transform, Transition},
     process::{ProcessGroup, command},
@@ -21,11 +21,22 @@ pub enum Mode {
     PreviewVideo,
     PreviewAudio,
 }
+#[derive(Default)]
+struct ProceduralSources(Vec<PathBuf>);
+impl Drop for ProceduralSources {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
 pub struct Graph {
     pub args: Vec<OsString>,
     pub duration: f64,
+    _sources: ProceduralSources,
 }
 impl Graph {
+    /// Keep the graph alive until the command exits: it owns temporary sources.
     pub fn command(&self) -> std::process::Command {
         let mut cmd = command("ffmpeg");
         cmd.args(&self.args);
@@ -113,7 +124,14 @@ fn animated(c: &Clip, p: &str, clock: &str) -> String {
 // Alpha is uniform across a layer, so evaluate it once per output frame.
 // colorchannelmixer has a runtime alpha command; geq would evaluate the whole
 // keyframe expression separately for every pixel of every frame.
-fn opacity_filter(c: &Clip, phase: f64, duration: f64, fps: u32, index: usize) -> String {
+fn opacity_filter(
+    c: &Clip,
+    phase: f64,
+    duration: f64,
+    fps: u32,
+    index: usize,
+    clock: (Exposure, f64),
+) -> String {
     let mut keys: Vec<_> = c.keyframes.iter().collect();
     keys.sort_by(|a, b| a.time.total_cmp(&b.time));
     let alpha = |time: f64| {
@@ -133,12 +151,25 @@ fn opacity_filter(c: &Clip, phase: f64, duration: f64, fps: u32, index: usize) -
         }
         keys.last().unwrap().transform.opacity
     };
-    let initial = alpha(phase);
+    let sample = |time: f64| {
+        let local = phase + clock.0.time(time + clock.1) - clock.1;
+        let value = alpha(local);
+        if c.transition == Transition::Fade {
+            let fade = c.fade_duration.min(c.duration / 2.);
+            value
+                * (local / fade)
+                    .min((c.duration - local) / fade)
+                    .clamp(0., 1.)
+        } else {
+            value
+        }
+    };
+    let initial = sample(0.);
     let mut previous = initial;
     let mut commands = String::new();
     for frame in 1..(duration * fps as f64).ceil() as u32 {
         let t = frame as f64 / fps as f64;
-        let value = alpha(phase + t);
+        let value = sample(t);
         if (value - previous).abs() > 1e-12 {
             commands += &format!(
                 "{:.9} colorchannelmixer@alpha{index} aa {value};",
@@ -156,6 +187,11 @@ fn opacity_filter(c: &Clip, phase: f64, duration: f64, fps: u32, index: usize) -
 }
 
 pub fn graphic_image(c: &Clip, path: &Path, w: u32, h: u32) -> Result<()> {
+    if c.vector.is_some() || c.scene3d.is_some() {
+        crate::procedural::image(c, 0., w, h, &ProcessGroup::default())?.save(path)?;
+        return Ok(());
+    }
+
     let mut pixels = RgbaImage::new(w, h);
     let color = parse_color(&c.color);
     let (wf, hf) = (w as f32, h as f32);
@@ -577,13 +613,47 @@ pub fn build_graph(
     duration: f64,
     mode: Mode,
 ) -> Result<Graph> {
+    build_graph_cancel(
+        p,
+        assets,
+        folder,
+        origin,
+        duration,
+        mode,
+        &ProcessGroup::default(),
+    )
+}
+pub fn build_graph_cancel(
+    p: &Project,
+    assets: &HashMap<String, Asset>,
+    folder: &Path,
+    origin: f64,
+    duration: f64,
+    mode: Mode,
+    group: &ProcessGroup,
+) -> Result<Graph> {
+    group.check()?;
+    ensure!(
+        origin.is_finite() && (0. ..=86400.).contains(&origin),
+        "Invalid render origin"
+    );
     p.validate()?;
     ensure!(
         duration > 0. && duration <= 30. + 1e-8 && duration.is_finite(),
         "Render windows must be greater than zero and at most 30 seconds"
     );
     fs::create_dir_all(folder)?;
-    let (w, h, fps) = (p.width, p.height, p.fps);
+    let mut sources = ProceduralSources::default();
+    let samples = if mode == Mode::PreviewAudio {
+        1
+    } else {
+        p.motion_blur_samples
+    };
+    let (w, h, fps) = (p.width, p.height, p.fps * samples);
+    let exposure = Exposure {
+        fps: p.fps,
+        fraction: if samples > 1 { p.motion_shutter } else { 1. },
+    };
     let mut args = vec![];
     push(
         &mut args,
@@ -676,7 +746,39 @@ pub fn build_graph(
         let start = (c.start - origin).max(0.);
         let dur = c.end().min(origin + duration) - c.start.max(origin);
         let fade = c.fade_duration.min(c.duration / 2.);
-        let path = if matches!(c.kind, Kind::Title | Kind::Graphic) {
+        let video_clock = format!(
+            "({}-{}+{})",
+            exposure.expression(&format!("(t+{start})")),
+            start,
+            phase
+        );
+        let video_t_clock = format!(
+            "({}-{}+{})",
+            exposure.expression(&format!("(T+{start})")),
+            start,
+            phase
+        );
+        let overlay_clock = format!("({}-{}+{})", exposure.expression("t"), start, phase);
+
+        let procedural = c.kind == Kind::Graphic && (c.vector.is_some() || c.scene3d.is_some());
+        let path = if procedural {
+            let path = folder.join(format!("procedural-{index}.mkv"));
+            sources.0.push(path.clone());
+            crate::procedural::write_source(
+                c,
+                crate::procedural::Window {
+                    phase,
+                    duration: dur,
+                    fps,
+                    size: [w, h],
+                    exposure,
+                    start,
+                },
+                &path,
+                group,
+            )?;
+            path
+        } else if matches!(c.kind, Kind::Title | Kind::Graphic) {
             let path = folder.join(format!("graphic-{index}.png"));
             graphic_image(c, &path, w, h)?;
             path
@@ -688,7 +790,9 @@ pub fn build_graph(
                 a.preview_path().to_owned()
             }
         };
-        if matches!(c.kind, Kind::Image | Kind::Title | Kind::Graphic) {
+        if procedural {
+            push(&mut args, ["-threads", "2", "-i"]);
+        } else if matches!(c.kind, Kind::Image | Kind::Title | Kind::Graphic) {
             push(
                 &mut args,
                 [
@@ -830,7 +934,10 @@ pub fn build_graph(
             chain += &format!(",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({mask})'");
         }
         if c.reveal != Reveal::None && phase + c.reveal_offset < c.reveal_duration {
-            let clock = format!("(T+{})/{}", phase + c.reveal_offset, c.reveal_duration);
+            let clock = format!(
+                "({video_t_clock}+{})/{}",
+                c.reveal_offset, c.reveal_duration
+            );
             let progress = Easing::Smoother.expression(&clock);
             let mask = match c.reveal {
                 Reveal::LeftToRight => format!("clip(W*({progress})-X,0,1)"),
@@ -847,12 +954,15 @@ pub fn build_graph(
         if c.transform.rotation != 0. || c.keyframes.iter().any(|k| k.transform.rotation != 0.) {
             chain += &format!(
                 ",rotate=a='({})*PI/180':ow=iw:oh=ih:c=none",
-                animated(c, "rotation", &format!("(t+{phase})"))
+                animated(c, "rotation", &video_clock)
             );
         }
-        let mut scale = animated(c, "scale", &format!("(t+{phase})"));
+        let mut scale = animated(c, "scale", &video_clock);
         if c.transition == Transition::Zoom {
-            scale = format!("({scale})*(0.8+0.2*min((t+{phase})/{},1))", c.fade_duration);
+            scale = format!(
+                "({scale})*(0.8+0.2*min(({video_clock})/{},1))",
+                c.fade_duration
+            );
         }
         // Packed RGBA after dynamic resizing isolates planar alpha filter buffers.
         // FFmpeg 7 can otherwise corrupt frame pools when animated scale and geq combine.
@@ -864,43 +974,28 @@ pub fn build_graph(
                 ",scale=w='max(2,trunc({w}*({scale})/2)*2)':h='max(2,trunc({h}*({scale})/2)*2)':eval=frame,format=rgba"
             );
         }
-        if c.transform.opacity != 1. || c.keyframes.iter().any(|k| k.transform.opacity != 1.) {
-            chain += &opacity_filter(c, phase, dur, fps, idx);
-        }
-        if c.transition == Transition::Fade {
-            if phase == 0. {
-                chain += &format!(
-                    ",fade=t=in:d={fade}:alpha=1,fade=t=out:st={}:d={fade}:alpha=1",
-                    c.duration - fade
-                );
-            } else if phase >= fade && c.duration - phase >= fade {
-                chain += &format!(
-                    ",fade=t=out:st={}:d={fade}:alpha=1",
-                    c.duration - phase - fade
-                );
-            } else {
-                chain += &format!(
-                    ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*max(0,min(1,min((T+{phase})/{fade},({}-T-{phase})/{fade})))'",
-                    c.duration
-                );
-            }
+        if c.transform.opacity != 1.
+            || c.keyframes.iter().any(|k| k.transform.opacity != 1.)
+            || c.transition == Transition::Fade
+        {
+            chain += &opacity_filter(c, phase, dur, fps, idx, (exposure, start));
         }
         if c.transition == Transition::Wipe {
             chain += &format!(
-                ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*lte(X,W*min((T+{phase})/{fade},1))'"
+                ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*lte(X,W*min(({video_t_clock})/{fade},1))'"
             );
         }
         chain += &format!(",setpts=PTS+{start}/TB[v{idx}]");
         filters.push(chain);
-        let x = animated(c, "x", &format!("(t-{start}+{phase})"));
-        let y = animated(c, "y", &format!("(t-{start}+{phase})"));
+        let x = animated(c, "x", &overlay_clock);
+        let y = animated(c, "y", &overlay_clock);
         // Overlay can retain the first input dimensions while an upstream scale
         // changes size. Compute current bounds explicitly to keep the layer's
         // anchor fixed throughout a zoom (and after a mid-animation seek).
-        let mut overlay_scale = animated(c, "scale", &format!("(t-{start}+{phase})"));
+        let mut overlay_scale = animated(c, "scale", &overlay_clock);
         if c.transition == Transition::Zoom {
             overlay_scale = format!(
-                "({overlay_scale})*(0.8+0.2*min((t-{start}+{phase})/{},1))",
+                "({overlay_scale})*(0.8+0.2*min(({overlay_clock})/{},1))",
                 c.fade_duration
             );
         }
@@ -908,11 +1003,16 @@ pub fn build_graph(
         let current_h = format!("max(2,trunc({h}*({overlay_scale})/2)*2)");
         let mut xe = format!("W*({x})/100-({current_w})/2");
         if c.transition == Transition::Slide {
-            xe += &format!("-W*max(1-(t-{start}+{phase})/{fade},0)");
+            xe += &format!("-W*max(1-({overlay_clock})/{fade},0)");
         }
         let next = format!("comp{idx}");
         filters.push(format!("[{base}][v{idx}]overlay=x='{xe}':y='H*({y})/100-({current_h})/2':enable='gte(t,{start})*lt(t,{})':eof_action=pass:repeatlast=0:format=auto[{next}]",start+dur));
         base = next;
+    }
+    if samples > 1 {
+        let next = "motion_blurred";
+        filters.push(format!("[{base}]tmix=frames={samples}:weights='{}',select='eq(mod(n,{samples}),{})',setpts=N/({}*TB),fps={}[{next}]",vec!["1";samples as usize].join(" "),samples-1,p.fps,p.fps));
+        base = next.into();
     }
     if mode != Mode::PreviewAudio {
         filters.push(format!(
@@ -942,7 +1042,11 @@ pub fn build_graph(
         push(&mut args, ["-map", "[outa]"]);
     }
     push(&mut args, ["-t", &duration.to_string()]);
-    Ok(Graph { args, duration })
+    Ok(Graph {
+        args,
+        duration,
+        _sources: sources,
+    })
 }
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Job {
@@ -996,7 +1100,7 @@ pub fn export(
             window = (window * p.fps as f64 / 2.).round().max(1.) / p.fps as f64;
         }
         let part = folder.join(format!("part-{:05}", chunks.len()));
-        let graph = build_graph(p, assets, &part, origin, window, Mode::Export)?;
+        let graph = build_graph_cancel(p, assets, &part, origin, window, Mode::Export, group)?;
         let path = part.join("video.mp4");
         let mut cmd = graph.command();
         cmd.args([

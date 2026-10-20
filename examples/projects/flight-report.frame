@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "90b1b728-e632-4115-943c-ed7889b35c85",
+        "id": "2c87b3da-a8f6-4fd3-a4a6-c23760cdda19",
         "asset_id": null,
         "kind": "graphic",
         "name": "APOGEE",
@@ -96,10 +96,14 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "d9be91a8-8f4c-4e05-bd1b-480d59258a7b",
+        "id": "4a764cb4-c7aa-42de-9c9f-f3064bf4eb2b",
         "asset_id": null,
         "kind": "graphic",
         "name": "PREDICTED ALTITUDE",
@@ -202,16 +206,22 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "90b1b728-e632-4115-943c-ed7889b35c85"
+    "selected": "2c87b3da-a8f6-4fd3-a4a6-c23760cdda19"
   }
 }

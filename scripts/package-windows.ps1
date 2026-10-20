@@ -40,6 +40,7 @@ try {
     Copy-Item "scripts/portable/*" $packagePath
     Copy-Item "examples/projects" (Join-Path $packagePath "Templates") -Recurse
     Copy-Item "examples/data" (Join-Path $packagePath "Templates/Data") -Recurse
+    Copy-Item "examples/vfx" (Join-Path $packagePath "Templates/VFX") -Recurse
     New-Item -ItemType Directory -Path (Join-Path $packagePath "docs") | Out-Null
     Copy-Item "docs/screenshots" (Join-Path $packagePath "docs/screenshots") -Recurse
     Copy-Item "docs/*.md", "docs/*.txt" (Join-Path $packagePath "docs")

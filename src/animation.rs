@@ -246,3 +246,37 @@ pub fn validate_chart(points: &[[f64; 2]]) -> Result<()> {
     );
     Ok(())
 }
+
+/// Sub-frame exposure clock, anchored to output-frame boundaries.
+#[derive(Debug, Clone, Copy)]
+pub struct Exposure {
+    pub fps: u32,
+    pub fraction: f64,
+}
+impl Default for Exposure {
+    fn default() -> Self {
+        Self {
+            fps: 30,
+            fraction: 1.,
+        }
+    }
+}
+impl Exposure {
+    pub fn time(self, time: f64) -> f64 {
+        if self.fraction == 1. {
+            return time;
+        }
+        let n = time * self.fps as f64;
+        let frame = (n + 1e-7).floor();
+        (frame + (n - frame).max(0.) * self.fraction) / self.fps as f64
+    }
+    pub fn expression(self, clock: &str) -> String {
+        if self.fraction == 1. {
+            return clock.into();
+        }
+        format!(
+            "((floor(({clock})*{}+0.0000001)+max(0,({clock})*{}-floor(({clock})*{}+0.0000001))*{})/{})",
+            self.fps, self.fps, self.fps, self.fraction, self.fps
+        )
+    }
+}

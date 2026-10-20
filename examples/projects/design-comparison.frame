@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "8b076078-b171-4d57-bad9-683a11e74c2f",
+        "id": "eb717299-eacc-43b8-a6c2-b7361910dfe1",
         "asset_id": null,
         "kind": "graphic",
         "name": "DESIGN A",
@@ -96,10 +96,14 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "a6d7a8cb-b526-429e-87d5-8bf375f96efb",
+        "id": "b2ff022f-f42a-4c2f-b352-17bc5b706d48",
         "asset_id": null,
         "kind": "graphic",
         "name": "DESIGN B",
@@ -186,10 +190,14 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "93325acc-6cbf-4247-9a44-6308ef5963e6",
+        "id": "c49a9758-db8e-4e85-abfe-b78e711da4f0",
         "asset_id": null,
         "kind": "graphic",
         "name": "REFERENCE MASS",
@@ -292,16 +300,22 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "8b076078-b171-4d57-bad9-683a11e74c2f"
+    "selected": "eb717299-eacc-43b8-a6c2-b7361910dfe1"
   }
 }

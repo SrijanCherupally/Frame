@@ -1,0 +1,105 @@
+{
+  "format": "frame-project",
+  "version": 1,
+  "project": {
+    "version": 1,
+    "name": "Vector draw-on",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "clips": [
+      {
+        "id": "cc89b84b-7d4d-4526-83d9-7ba4015383b3",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "Vector draw-on",
+        "track": 0,
+        "start": 0.0,
+        "duration": 5.0,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 50.0,
+        "y": 50.0,
+        "scale": 1.0,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "none",
+        "reveal_duration": 1.2,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "Your story starts here",
+        "font_size": 64,
+        "color": "#56dae0",
+        "graphic": "arrow",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [],
+        "vector": {
+          "nodes": [
+            {
+              "point": [
+                20.0,
+                75.0
+              ],
+              "incoming": [
+                20.0,
+                75.0
+              ],
+              "outgoing": [
+                30.0,
+                15.0
+              ]
+            },
+            {
+              "point": [
+                80.0,
+                65.0
+              ],
+              "incoming": [
+                65.0,
+                10.0
+              ],
+              "outgoing": [
+                80.0,
+                65.0
+              ]
+            }
+          ],
+          "target": [],
+          "closed": false,
+          "draw_duration": 1.5,
+          "morph_duration": 2.0,
+          "stroke_start": 0.0,
+          "stroke_end": 1.0
+        },
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
+      }
+    ],
+    "muted_tracks": [],
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
+  },
+  "media": [],
+  "workspace": {
+    "playhead": 1.0,
+    "zoom": 100.0,
+    "selected": "cc89b84b-7d4d-4526-83d9-7ba4015383b3"
+  }
+}

@@ -26,7 +26,7 @@ jobs:
         run: |
           ./scripts/test-windows-media.ps1 -PackageDir windows-package
           $env:PATH = "$pwd/windows-package;$env:PATH"
-          cargo test --locked --test motion_render -- --test-threads=2
+          cargo test --locked --test motion_render --test vfx -- --test-threads=2
           if ($LASTEXITCODE -ne 0) { throw "Windows animation rendering tests failed." }
       - name: Upload offline Windows ZIP
         uses: actions/upload-artifact@v4

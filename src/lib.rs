@@ -9,3 +9,8 @@ pub mod process;
 pub mod render;
 pub mod storage;
 pub mod ui;
+
+pub mod procedural;
+pub mod scene3d;
+pub mod tracking;
+pub mod vector;

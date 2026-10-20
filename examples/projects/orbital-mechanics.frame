@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "b2226c0a-2146-445d-85f8-cbf728631f60",
+        "id": "6b0d1977-3c19-48a5-bdd4-57b64a8cf95f",
         "asset_id": null,
         "kind": "graphic",
         "name": "ORBITAL MECHANICS",
@@ -112,10 +112,14 @@
             "rotation": 0.0,
             "opacity": 0.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "a01cac4e-9639-451b-90c1-dbca5c98647e",
+        "id": "8d72f16a-4ef8-4b59-a7b6-d8af3aab5085",
         "asset_id": null,
         "kind": "graphic",
         "name": "VELOCITY + GRAVITY",
@@ -202,16 +206,22 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "b2226c0a-2146-445d-85f8-cbf728631f60"
+    "selected": "6b0d1977-3c19-48a5-bdd4-57b64a8cf95f"
   }
 }

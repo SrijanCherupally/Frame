@@ -67,7 +67,7 @@ fn run() -> anyhow::Result<()> {
     let screenshot = if args.first().map(String::as_str) == Some("--ui-smoke") {
         anyhow::ensure!(
             (2..=3).contains(&args.len()),
-            "Usage: frame --ui-smoke screenshot.png [graphics|motion|animation|formats|themes|midnight|graphite|amethyst|forest|dawn|edit|color|audio]"
+            "Usage: frame --ui-smoke screenshot.png [graphics|motion|animation|vectors|3d|tracking|tracking-demo|blur|formats|themes|midnight|graphite|amethyst|forest|dawn|edit|color|audio]"
         );
         if let Some(view) = args.get(2) {
             app.prepare_smoke_view(view)?;

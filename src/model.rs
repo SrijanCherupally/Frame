@@ -146,6 +146,10 @@ pub struct Clip {
     pub graphic_value: f64,
     pub chart_data: Vec<[f64; 2]>,
     pub keyframes: Vec<Keyframe>,
+    pub vector: Option<crate::vector::VectorShape>,
+    pub scene3d: Option<crate::scene3d::Scene>,
+    pub content_offset: f64,
+    pub content_rate: f64,
 }
 impl Default for Clip {
     fn default() -> Self {
@@ -185,6 +189,10 @@ impl Default for Clip {
             graphic_value: 0.72,
             chart_data: vec![],
             keyframes: vec![],
+            vector: None,
+            scene3d: None,
+            content_offset: 0.,
+            content_rate: 1.,
         }
     }
 }
@@ -235,10 +243,15 @@ impl Clip {
             duration >= 1. / fps as f64 - 1e-8 && self.start + duration <= 86400.,
             "Output must last at least one frame and fit a 24-hour timeline"
         );
+        ensure!(
+            (self.content_rate / ratio).is_finite() && (self.content_rate / ratio).abs() <= 1e15,
+            "Retime exceeds the procedural clock range"
+        );
         self.duration = duration;
         self.speed = speed;
         self.reveal_duration *= ratio;
         self.reveal_offset *= ratio;
+        self.content_rate /= ratio;
         for k in &mut self.keyframes {
             k.time *= ratio;
         }
@@ -265,6 +278,8 @@ pub struct Project {
     pub clips: Vec<Clip>,
     pub muted_tracks: Vec<usize>,
     pub hidden_tracks: Vec<usize>,
+    pub motion_blur_samples: u32,
+    pub motion_shutter: f64,
 }
 impl Default for Project {
     fn default() -> Self {
@@ -277,6 +292,8 @@ impl Default for Project {
             clips: vec![],
             muted_tracks: vec![],
             hidden_tracks: vec![],
+            motion_blur_samples: 1,
+            motion_shutter: 0.5,
         }
     }
 }
@@ -302,6 +319,24 @@ impl Project {
         ensure!(
             self.clips.iter().map(|c| c.chart_data.len()).sum::<usize>() <= 100_000,
             "Project chart data limit: 100,000 points"
+        );
+        ensure!(
+            [1, 2, 4, 8].contains(&self.motion_blur_samples),
+            "Motion blur samples must be 1, 2, 4 or 8"
+        );
+        ensure!(
+            self.clips
+                .iter()
+                .filter_map(|c| c.scene3d.as_ref())
+                .flat_map(|s| &s.objects)
+                .map(|o| o.mesh.vertices.len())
+                .sum::<usize>()
+                <= 100_000,
+            "Project mesh budget: 100,000 vertices"
+        );
+        ensure!(
+            self.motion_shutter.is_finite() && (0.1..=1.).contains(&self.motion_shutter),
+            "Animation shutter must be 36–360 degrees"
         );
         let mut ids = HashSet::new();
         for c in &self.clips {
@@ -331,6 +366,29 @@ impl Project {
             }
             ensure!(c.speed.is_finite() && c.speed > 0., "Invalid speed");
             ensure!(c.end() <= 86400. + 1e-8, "Timeline limit: 24 hours");
+            ensure!(
+                c.content_offset.is_finite()
+                    && c.content_offset.abs() <= 1e18
+                    && c.content_rate.is_finite()
+                    && c.content_rate.abs() <= 1e15,
+                "Invalid procedural animation clock"
+            );
+            ensure!(
+                c.vector.is_none() || c.scene3d.is_none(),
+                "A layer cannot contain both a vector path and a 3D scene"
+            );
+            if c.vector.is_some() || c.scene3d.is_some() {
+                ensure!(
+                    c.kind == Kind::Graphic,
+                    "Procedural content requires a graphic layer"
+                );
+            }
+            if let Some(v) = &c.vector {
+                v.validate()?;
+            }
+            if let Some(s) = &c.scene3d {
+                s.validate()?;
+            }
             validate_transform(&c.transform)?;
             ensure!(
                 c.text.len() <= 12000 && c.name.len() <= 1200,

@@ -9,7 +9,7 @@
     "fps": 30,
     "clips": [
       {
-        "id": "547c2326-8c28-4672-9eb0-467a141e934c",
+        "id": "8c033a52-cea2-4287-a05e-550f863c8fc8",
         "asset_id": null,
         "kind": "graphic",
         "name": "Rocket airframe",
@@ -96,10 +96,14 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "b6812726-7eb0-4268-97ac-094d6c3ddd46",
+        "id": "b365367d-855c-4c0b-beb3-dcb1435c72d5",
         "asset_id": null,
         "kind": "graphic",
         "name": "Thrust vector",
@@ -186,10 +190,14 @@
             "rotation": -90.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       },
       {
-        "id": "6dd55d9b-2fa1-4e43-bf65-0fef5a982930",
+        "id": "b5a2e04c-387d-41ee-b7d8-0353fbc0a32c",
         "asset_id": null,
         "kind": "title",
         "name": "THRUST",
@@ -276,16 +284,22 @@
             "rotation": 0.0,
             "opacity": 1.0
           }
-        ]
+        ],
+        "vector": null,
+        "scene3d": null,
+        "content_offset": 0.0,
+        "content_rate": 1.0
       }
     ],
     "muted_tracks": [],
-    "hidden_tracks": []
+    "hidden_tracks": [],
+    "motion_blur_samples": 1,
+    "motion_shutter": 0.5
   },
   "media": [],
   "workspace": {
     "playhead": 1.0,
     "zoom": 70.0,
-    "selected": "547c2326-8c28-4672-9eb0-467a141e934c"
+    "selected": "8c033a52-cea2-4287-a05e-550f863c8fc8"
   }
 }

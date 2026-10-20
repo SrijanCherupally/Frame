@@ -5,6 +5,17 @@ impl FrameApp {
     pub fn prepare_smoke_view(&mut self, view: &str) -> anyhow::Result<()> {
         match view {
             "graphics" => self.tab = Tab::Graphics,
+            "vectors" => {
+                self.open_effects(super::effects::Panel::Vector);
+                self.new_effect_layer(super::effects::Panel::Vector);
+            }
+            "3d" => {
+                self.open_effects(super::effects::Panel::Scene);
+                self.new_effect_layer(super::effects::Panel::Scene);
+            }
+            "tracking" => self.open_effects(super::effects::Panel::Tracking),
+            "tracking-demo" => self.prepare_tracking_demo()?,
+            "blur" => self.open_effects(super::effects::Panel::Blur),
             "motion" => self.tab = Tab::Motion,
             "animation" => {
                 self.activate_workspace(WorkMode::Motion);
@@ -154,6 +165,14 @@ impl FrameApp {
                 .color(palette().accent),
         );
         ui.label(RichText::new("Editable diagrams, labels and data. Add a graphic, then customize it in Properties.").small().color(palette().muted));
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Vector Studio").clicked() {
+                self.open_effects(super::effects::Panel::Vector);
+            }
+            if ui.button("3D Studio").clicked() {
+                self.open_effects(super::effects::Panel::Scene);
+            }
+        });
         ui.add_space(8.);
         egui::CollapsingHeader::new("Ready-made explanation scenes")
             .default_open(true)
@@ -249,6 +268,14 @@ impl FrameApp {
         if ui.button("Open Motion Studio →").clicked() {
             self.motion_window = true;
         }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Tracking").clicked() {
+                self.open_effects(super::effects::Panel::Tracking);
+            }
+            if ui.button("Motion blur").clicked() {
+                self.open_effects(super::effects::Panel::Blur);
+            }
+        });
         ui.add_space(8.);
         card().show(ui,|ui| {
             section_title(ui,"Preset controls",palette().violet);

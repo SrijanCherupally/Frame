@@ -8,6 +8,8 @@ Use **Theme** to choose Midnight, Graphite, Amethyst, Forest or Dawn (light), an
 
 **Motion Studio** adds editable timing curves, Bézier paths, reusable animation and smooth reveals. Graphics now include CSV data charts and seven explanation scenes. See the [reference breakdown and production guide](../docs/animation-guide.md).
 
+**VFX Studio** adds point tracking, editable vectors/stroke drawing/morphing, 3D scenes/OBJ meshes, and animation shutter blur. [Workflow guide](../docs/vfx-guide.md). Examples are included in Templates and Templates/VFX.
+
 The standalone `Frame.exe` file in this folder is only the application component; use the full ZIP for the included media tools, templates, licenses and corresponding source. [Checksums](SHA256SUMS.txt).
 
 Unsigned Windows x64 build, cross-compiled on Linux. Genuine Windows runtime testing remains outstanding.
