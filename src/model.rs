@@ -1,3 +1,4 @@
+use crate::animation::{Easing, MotionPath, Reveal, default_domain};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -29,6 +30,7 @@ pub enum Mask {
     None,
     Circle,
     Rectangle,
+    Text,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -47,6 +49,10 @@ pub enum Graphic {
     Rocket,
     Equation,
     Comparison,
+    Trajectory,
+    Orbit,
+    Wave,
+    Chart,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -71,8 +77,35 @@ impl Default for Transform {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Keyframe {
     pub time: f64,
+    #[serde(default)]
+    pub easing: Easing,
+    #[serde(default = "default_domain")]
+    pub domain: [f64; 2],
+    #[serde(default)]
+    pub path: Option<MotionPath>,
     #[serde(flatten)]
     pub transform: Transform,
+}
+impl Default for Keyframe {
+    fn default() -> Self {
+        Self {
+            time: 0.,
+            transform: Transform::default(),
+            easing: Easing::Linear,
+            domain: default_domain(),
+            path: None,
+        }
+    }
+}
+impl Keyframe {
+    pub fn fraction(&self, u: f64) -> f64 {
+        let [lo, hi] = self.domain;
+        let (a, b) = (self.easing.sample(lo), self.easing.sample(hi));
+        if (b - a).abs() < 1e-14 {
+            return self.easing.sample(u);
+        }
+        (self.easing.sample(lo + (hi - lo) * u.clamp(0., 1.)) - a) / (b - a)
+    }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -95,6 +128,9 @@ pub struct Clip {
     pub warmth: f64,
     pub blur: f64,
     pub motion_blur: bool,
+    pub reveal: Reveal,
+    pub reveal_duration: f64,
+    pub reveal_offset: f64,
     pub shutter: f64,
     pub deflicker: bool,
     pub mask: Mask,
@@ -108,6 +144,7 @@ pub struct Clip {
     pub fill: bool,
     pub secondary_color: String,
     pub graphic_value: f64,
+    pub chart_data: Vec<[f64; 2]>,
     pub keyframes: Vec<Keyframe>,
 }
 impl Default for Clip {
@@ -130,6 +167,9 @@ impl Default for Clip {
             warmth: 0.,
             blur: 0.,
             motion_blur: false,
+            reveal: Reveal::None,
+            reveal_duration: 1.2,
+            reveal_offset: 0.,
             shutter: 0.5,
             deflicker: false,
             mask: Mask::None,
@@ -143,6 +183,7 @@ impl Default for Clip {
             fill: false,
             secondary_color: "#172127".into(),
             graphic_value: 0.72,
+            chart_data: vec![],
             keyframes: vec![],
         }
     }
@@ -167,7 +208,18 @@ impl Clip {
             let (a, b) = (pair[0], pair[1]);
             if time <= b.time {
                 let f = (time - a.time) / (b.time - a.time);
-                return interpolate(&a.transform, &b.transform, f);
+                let f = a.fraction(f);
+                let mut value = interpolate(&a.transform, &b.transform, f);
+                if let Some(path) = a.path {
+                    let p = path.point(
+                        [a.transform.x, a.transform.y],
+                        [b.transform.x, b.transform.y],
+                        f,
+                    );
+                    value.x = p[0];
+                    value.y = p[1];
+                }
+                return value;
             }
         }
         keys.last().unwrap().transform.clone()
@@ -185,6 +237,8 @@ impl Clip {
         );
         self.duration = duration;
         self.speed = speed;
+        self.reveal_duration *= ratio;
+        self.reveal_offset *= ratio;
         for k in &mut self.keyframes {
             k.time *= ratio;
         }
@@ -245,6 +299,10 @@ impl Project {
             "Frame rate must be 12–60 fps"
         );
         ensure!(self.clips.len() <= 2000, "Project limit: 2,000 clips");
+        ensure!(
+            self.clips.iter().map(|c| c.chart_data.len()).sum::<usize>() <= 100_000,
+            "Project chart data limit: 100,000 points"
+        );
         let mut ids = HashSet::new();
         for c in &self.clips {
             ensure!(
@@ -263,6 +321,8 @@ impl Project {
                 ("Warmth", c.warmth, -1., 1.),
                 ("Blur", c.blur, 0., 20.),
                 ("Shutter", c.shutter, 0.1, 1.),
+                ("Reveal duration", c.reveal_duration, 1e-12, 1e18),
+                ("Reveal offset", c.reveal_offset, 0., 1e18),
                 ("Stroke width", c.stroke_width, 1., 40.),
                 ("Graphic value", c.graphic_value, 0., 1.),
                 ("Fade duration", c.fade_duration, 0.05, 5.),
@@ -276,7 +336,8 @@ impl Project {
                 c.text.len() <= 12000 && c.name.len() <= 1200,
                 "Text too long"
             );
-            ensure!((12..=200).contains(&c.font_size), "Invalid font size");
+            ensure!((12..=800).contains(&c.font_size), "Invalid font size");
+            crate::animation::validate_chart(&c.chart_data)?;
             ensure!(
                 [&c.color, &c.secondary_color]
                     .iter()
@@ -301,6 +362,18 @@ impl Project {
                     "Invalid or duplicate keyframe time"
                 );
                 validate_transform(&k.transform)?;
+                k.easing.validate()?;
+                ensure!(
+                    k.domain[0].is_finite()
+                        && k.domain[1].is_finite()
+                        && k.domain[0] >= 0.
+                        && k.domain[1] <= 1.
+                        && k.domain[1] > k.domain[0],
+                    "Invalid easing domain"
+                );
+                if let Some(path) = k.path {
+                    path.validate()?;
+                }
             }
         }
         ensure!(

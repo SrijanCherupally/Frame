@@ -1,0 +1,233 @@
+{
+  "format": "frame-project",
+  "version": 1,
+  "project": {
+    "version": 1,
+    "name": "Signal and response",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "clips": [
+      {
+        "id": "c02731ba-f79c-45b2-ad27-77213dfcc8c6",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "CONTROL INPUT",
+        "track": 0,
+        "start": 0.0,
+        "duration": 6.0,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 50.0,
+        "y": 30.0,
+        "scale": 0.8,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "left-to-right",
+        "reveal_duration": 1.6,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "CONTROL INPUT",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "wave",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 30.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 30.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 5.2,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 30.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 6.0,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 30.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 0.0
+          }
+        ]
+      },
+      {
+        "id": "141bf77e-27b7-4363-b123-0a3af57a922e",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "ATTITUDE RESPONSE",
+        "track": 0,
+        "start": 0.23333333333333334,
+        "duration": 5.766666666666667,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 50.0,
+        "y": 72.0,
+        "scale": 0.8,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "left-to-right",
+        "reveal_duration": 1.6,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "ATTITUDE RESPONSE",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "chart",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 72.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 72.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 4.966666666666667,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 72.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 5.766666666666667,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 72.0,
+            "scale": 0.8,
+            "rotation": 0.0,
+            "opacity": 0.0
+          }
+        ]
+      }
+    ],
+    "muted_tracks": [],
+    "hidden_tracks": []
+  },
+  "media": [],
+  "workspace": {
+    "playhead": 1.0,
+    "zoom": 70.0,
+    "selected": "c02731ba-f79c-45b2-ad27-77213dfcc8c6"
+  }
+}

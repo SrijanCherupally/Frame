@@ -1,0 +1,217 @@
+{
+  "format": "frame-project",
+  "version": 1,
+  "project": {
+    "version": 1,
+    "name": "Flight trajectory",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "clips": [
+      {
+        "id": "95aa321f-2328-4d44-8fd2-7297dff25aab",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "CONTROLLED DESCENT",
+        "track": 0,
+        "start": 0.0,
+        "duration": 6.0,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 40.0,
+        "y": 50.0,
+        "scale": 0.85,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "left-to-right",
+        "reveal_duration": 1.6,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "CONTROLLED DESCENT",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "trajectory",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 40.0,
+            "y": 50.0,
+            "scale": 0.85,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 40.0,
+            "y": 50.0,
+            "scale": 0.85,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 5.2,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 40.0,
+            "y": 50.0,
+            "scale": 0.85,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 6.0,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 40.0,
+            "y": 50.0,
+            "scale": 0.85,
+            "rotation": 0.0,
+            "opacity": 0.0
+          }
+        ]
+      },
+      {
+        "id": "73a82c00-ba58-45c5-8ee3-e5303ebb8c75",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "LANDING ERROR",
+        "track": 0,
+        "start": 0.23333333333333334,
+        "duration": 5.766666666666667,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 78.0,
+        "y": 45.0,
+        "scale": 0.65,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "none",
+        "reveal_duration": 1.2,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "LANDING ERROR\n0.4 m",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "stat",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 78.0,
+            "y": 63.0,
+            "scale": 0.65,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 78.0,
+            "y": 45.0,
+            "scale": 0.65,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 5.766666666666667,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 78.0,
+            "y": 45.0,
+            "scale": 0.65,
+            "rotation": 0.0,
+            "opacity": 1.0
+          }
+        ]
+      }
+    ],
+    "muted_tracks": [],
+    "hidden_tracks": []
+  },
+  "media": [],
+  "workspace": {
+    "playhead": 1.0,
+    "zoom": 70.0,
+    "selected": "95aa321f-2328-4d44-8fd2-7297dff25aab"
+  }
+}

@@ -1,3 +1,4 @@
+mod animation;
 mod theme;
 mod tools;
 use theme::*;
@@ -106,6 +107,10 @@ pub struct FrameApp {
     export_window: bool,
     settings_window: bool,
     theme_window: bool,
+    motion_window: bool,
+    motion_key: usize,
+    motion_settings: presets::MotionSettings,
+    animation_clipboard: Option<Clip>,
     workspace: WorkMode,
     theme: Theme,
     applied_theme: Option<Theme>,
@@ -273,6 +278,10 @@ impl FrameApp {
             export_window: false,
             settings_window: false,
             theme_window: false,
+            motion_window: false,
+            motion_key: 0,
+            motion_settings: presets::MotionSettings::default(),
+            animation_clipboard: None,
             workspace: WorkMode::Edit,
             theme,
             applied_theme: None,
@@ -1799,7 +1808,7 @@ c.color=format!("#{:02x}{:02x}{:02x}",rgb[0],rgb[1],rgb[2]);
 }
 
 {
-ui.add(egui::DragValue::new(&mut c.font_size).range(12..=200).suffix(" px"));
+ui.add(egui::DragValue::new(&mut c.font_size).range(12..=800).suffix(" px"));
 }
 }
 );
@@ -1919,6 +1928,7 @@ edit::add_keyframe(&mut c,(self.time-old.start).clamp(0.,old.duration),self.proj
 }
 }
 );
+if ui.button("Open Motion Studio →").clicked(){self.motion_window=true;}
 if ui.button("Browse motion presets →").clicked(){self.tab=Tab::Motion;}
 if !c.keyframes.is_empty() && ui.small_button("Clear animation").clicked(){c.transform=c.value((self.time-c.start).clamp(0.,c.duration));c.keyframes.clear();}
 ui.label(RichText::new("Add a keyframe, move the playhead, then change the transform.").small().color(palette().muted));
@@ -1950,13 +1960,19 @@ ui.add_space(12.);
 
      section_title(ui,"Mask & transition",palette().amber);
 egui::ComboBox::from_id_salt("mask").selected_text(format!("{:?}",c.mask)).show_ui(ui,|ui|{
-for v in [Mask::None,Mask::Circle,Mask::Rectangle]{
+for v in [Mask::None,Mask::Circle,Mask::Rectangle,Mask::Text]{
 ui.selectable_value(&mut c.mask,v,format!("{v:?}"));
 }
 }
 );
 
     }
+
+    if c.mask==Mask::Text {
+ui.label("Footage inside text");
+ui.add(egui::TextEdit::multiline(&mut c.text).char_limit(3000).desired_rows(2));
+ui.add(egui::DragValue::new(&mut c.font_size).range(12..=800).suffix(" px"));
+}
 
     egui::ComboBox::from_id_salt("transition").selected_text(format!("{:?}",c.transition)).show_ui(ui,|ui|{
 for v in [Transition::None,Transition::Fade,Transition::Slide,Transition::Zoom,Transition::Wipe]{
@@ -2117,6 +2133,11 @@ self.property_drag=false;
                         self.delete();
                     }
 
+                    let can_detach=self.selected_index().is_some_and(|i|{let c=&self.project.clips[i];c.kind==Kind::Video && c.volume>0. && c.asset_id.as_ref().and_then(|id|self.assets.get(id)).is_some_and(|a|a.has_audio)});
+                    if ui.add_enabled(can_detach,egui::Button::new("Detach audio")).on_hover_text("Move this clip's source audio to its own editable voiceover-track clip for J/L cuts.").clicked() && let Some(id)=self.selected.clone() {
+                        let mut next=self.project.clone();
+                        if let Some(audio)=edit::detach_audio(&mut next,&id){self.history.remember(&self.project);self.project=next;self.selected=Some(audio);self.modified();}
+                    }
                     ui.separator();
 
                     ui.checkbox(&mut self.snap, "Snap");
@@ -2549,25 +2570,13 @@ self.property_drag=false;
                                         edited.source_in =
                                             (edited.source_in + delta * edited.speed).max(0.);
 
-                                        if !original.keyframes.is_empty() {
-                                            edited.keyframes = original
-                                                .keyframes
-                                                .iter()
-                                                .filter(|k| k.time > delta)
-                                                .map(|k| Keyframe {
-                                                    time: k.time - delta,
-                                                    transform: k.transform.clone(),
-                                                })
-                                                .collect();
-
-                                            edited.keyframes.insert(
-                                                0,
-                                                Keyframe {
-                                                    time: 0.,
-                                                    transform: original.value(delta),
-                                                },
-                                            );
-                                        }
+                                        edited.keyframes = edit::slice_keyframes(
+                                            &original,
+                                            delta,
+                                            original.duration,
+                                        );
+                                        edited.reveal_offset =
+                                            (original.reveal_offset + delta).max(0.);
                                     }
 
                                     if let Some(index) =
@@ -2923,6 +2932,7 @@ ui.label(RichText::new("This version has not reached Resolve/Premiere parity. Op
         self.dialogs(ctx);
         self.format_dialog(ctx);
         self.theme_dialog(ctx);
+        self.animation_studio(ctx);
     }
 }
 
@@ -3011,10 +3021,12 @@ pub fn demo_project() -> Project {
             Keyframe {
                 time: 0.,
                 transform: a,
+                ..Keyframe::default()
             },
             Keyframe {
                 time: 6.,
                 transform: b,
+                ..Keyframe::default()
             },
         ],
         ..Clip::default()
@@ -3221,6 +3233,58 @@ mod tests {
             assert!(output.shapes.len() > 30);
             assert_eq!(app.project, original);
         }
+    }
+
+    #[test]
+    fn motion_studio_draws_custom_curves_paths_and_chart_controls_in_each_theme() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut app = FrameApp::new(Storage::open(temp.path().into()).unwrap()).unwrap();
+        app.prepare_smoke_view("animation").unwrap();
+        let i = app.selected_index().unwrap();
+        app.project.clips[i].kind = Kind::Graphic;
+        app.project.clips[i].asset_id = None;
+        app.project.clips[i].graphic = Graphic::Chart;
+        app.project.clips[i].keyframes[0].easing = crate::animation::Easing::Bezier {
+            x1: 0.22,
+            y1: 0.,
+            x2: 0.36,
+            y2: 1.,
+        };
+        let original = app.project.clone();
+        let ctx = egui::Context::default();
+        for theme in THEMES {
+            app.choose_theme(theme, &ctx);
+            let out = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+                app.draw(ctx)
+            });
+            assert!(out.shapes.len() > 100);
+            assert_eq!(app.project, original);
+            app.project.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn motion_studio_handles_tightly_spaced_keys_and_off_canvas_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let mut app = FrameApp::new(Storage::open(temp.path().into()).unwrap()).unwrap();
+        app.prepare_smoke_view("animation").unwrap();
+        let i = app.selected_index().unwrap();
+        for (n, key) in app.project.clips[i].keyframes.iter_mut().enumerate() {
+            key.time = n as f64 * 1e-8;
+        }
+        app.project.clips[i].keyframes[0].path = Some(crate::animation::MotionPath {
+            control1: [-100., 200.],
+            control2: [200., -100.],
+        });
+        app.motion_key = 1;
+        app.project.validate().unwrap();
+        let ctx = egui::Context::default();
+        let original = app.project.clone();
+        let out = ctx.run(input(vec![], egui::Modifiers::default()), |ctx| {
+            app.draw(ctx)
+        });
+        assert!(out.shapes.len() > 100);
+        assert_eq!(app.project, original);
     }
 
     #[test]

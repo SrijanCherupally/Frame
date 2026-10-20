@@ -1,0 +1,307 @@
+{
+  "format": "frame-project",
+  "version": 1,
+  "project": {
+    "version": 1,
+    "name": "Design comparison",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "clips": [
+      {
+        "id": "8b076078-b171-4d57-bad9-683a11e74c2f",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "DESIGN A",
+        "track": 0,
+        "start": 0.0,
+        "duration": 6.0,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 27.0,
+        "y": 45.0,
+        "scale": 0.75,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "none",
+        "reveal_duration": 1.2,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "DESIGN A\n124 g",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "stat",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 27.0,
+            "y": 63.0,
+            "scale": 0.75,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 27.0,
+            "y": 45.0,
+            "scale": 0.75,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 6.0,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 27.0,
+            "y": 45.0,
+            "scale": 0.75,
+            "rotation": 0.0,
+            "opacity": 1.0
+          }
+        ]
+      },
+      {
+        "id": "a6d7a8cb-b526-429e-87d5-8bf375f96efb",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "DESIGN B",
+        "track": 0,
+        "start": 0.23333333333333334,
+        "duration": 5.766666666666667,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 73.0,
+        "y": 45.0,
+        "scale": 0.75,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "none",
+        "reveal_duration": 1.2,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "DESIGN B\n98 g",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "stat",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 73.0,
+            "y": 63.0,
+            "scale": 0.75,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 73.0,
+            "y": 45.0,
+            "scale": 0.75,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 5.766666666666667,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 73.0,
+            "y": 45.0,
+            "scale": 0.75,
+            "rotation": 0.0,
+            "opacity": 1.0
+          }
+        ]
+      },
+      {
+        "id": "93325acc-6cbf-4247-9a44-6308ef5963e6",
+        "asset_id": null,
+        "kind": "graphic",
+        "name": "REFERENCE MASS",
+        "track": 0,
+        "start": 0.43333333333333335,
+        "duration": 5.566666666666666,
+        "source_in": 0.0,
+        "speed": 1.0,
+        "volume": 1.0,
+        "x": 50.0,
+        "y": 80.0,
+        "scale": 0.6,
+        "rotation": 0.0,
+        "opacity": 1.0,
+        "brightness": 0.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "warmth": 0.0,
+        "blur": 0.0,
+        "motion_blur": false,
+        "reveal": "left-to-right",
+        "reveal_duration": 1.6,
+        "reveal_offset": 0.0,
+        "shutter": 0.5,
+        "deflicker": false,
+        "mask": "none",
+        "transition": "none",
+        "fade_duration": 0.5,
+        "text": "REFERENCE MASS\nOPTIMIZED MASS",
+        "font_size": 48,
+        "color": "#c6e99d",
+        "graphic": "comparison",
+        "stroke_width": 10.0,
+        "fill": false,
+        "secondary_color": "#172127",
+        "graphic_value": 0.72,
+        "chart_data": [],
+        "keyframes": [
+          {
+            "time": 0.0,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 80.0,
+            "scale": 0.6,
+            "rotation": 0.0,
+            "opacity": 0.0
+          },
+          {
+            "time": 0.8,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 80.0,
+            "scale": 0.6,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 4.766666666666667,
+            "easing": {
+              "type": "smoother"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 80.0,
+            "scale": 0.6,
+            "rotation": 0.0,
+            "opacity": 1.0
+          },
+          {
+            "time": 5.566666666666666,
+            "easing": {
+              "type": "linear"
+            },
+            "domain": [
+              0.0,
+              1.0
+            ],
+            "path": null,
+            "x": 50.0,
+            "y": 80.0,
+            "scale": 0.6,
+            "rotation": 0.0,
+            "opacity": 0.0
+          }
+        ]
+      }
+    ],
+    "muted_tracks": [],
+    "hidden_tracks": []
+  },
+  "media": [],
+  "workspace": {
+    "playhead": 1.0,
+    "zoom": 70.0,
+    "selected": "8b076078-b171-4d57-bad9-683a11e74c2f"
+  }
+}

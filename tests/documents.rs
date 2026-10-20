@@ -241,7 +241,15 @@ fn motion_entrances_finish_promptly_even_on_four_hour_clips() {
         .validate()
         .unwrap();
         assert!(c.keyframes.len() <= 200);
-        if !matches!(motion, Motion::ZoomIn | Motion::ZoomOut | Motion::Float) {
+        if !matches!(
+            motion,
+            Motion::ZoomIn
+                | Motion::ZoomOut
+                | Motion::Float
+                | Motion::Orbit
+                | Motion::Pulse
+                | Motion::Drift
+        ) {
             assert!(
                 (c.value(0.8).opacity - 1.).abs() < 1e-8,
                 "{motion:?} should be visible after its entrance"

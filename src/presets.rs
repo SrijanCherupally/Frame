@@ -1,5 +1,8 @@
-//! Reusable canvas and motion presets. Motion is baked into ordinary editable keyframes.
-use crate::model::{Clip, Graphic, Keyframe, Project};
+//! Reusable formats, continuous motion and explanation scenes.
+use crate::{
+    animation::{Easing, MotionPath, Reveal},
+    model::{Clip, Graphic, Keyframe, Project},
+};
 
 pub struct FormatPreset {
     pub name: &'static str,
@@ -106,6 +109,10 @@ impl FormatPreset {
     }
 }
 pub const GRAPHICS: &[(Graphic, &str, &str)] = &[
+    (Graphic::Trajectory, "Flight trajectory", "FLIGHT PATH"),
+    (Graphic::Orbit, "Orbital diagram", "ORBITAL MECHANICS"),
+    (Graphic::Wave, "Signal waveform", "CONTROL SIGNAL"),
+    (Graphic::Chart, "Data curve", "ALTITUDE / TIME"),
     (Graphic::Arrow, "Direction arrow", "THRUST"),
     (Graphic::Circle, "Highlight ellipse", "Focus"),
     (Graphic::Rectangle, "Focus frame", "Focus"),
@@ -148,6 +155,11 @@ pub enum Motion {
     ZoomOut,
     Float,
     Spin,
+    Arc,
+    Orbit,
+    Pulse,
+    Drift,
+    Focus,
 }
 pub const MOTIONS: &[(Motion, &str, &str)] = &[
     (Motion::Fade, "Soft reveal", "Fade in, hold, fade out"),
@@ -179,103 +191,189 @@ pub const MOTIONS: &[(Motion, &str, &str)] = &[
         "A subtle up and down motion",
     ),
     (Motion::Spin, "Turn & reveal", "A rotating entrance"),
+    (
+        Motion::Arc,
+        "Curved arrival",
+        "A flowing Bézier motion path",
+    ),
+    (
+        Motion::Orbit,
+        "Orbital motion",
+        "A continuous circular motion path",
+    ),
+    (Motion::Pulse, "Soft pulse", "A smooth emphasis beat"),
+    (
+        Motion::Drift,
+        "Cinematic drift",
+        "Gentle pan and push across the shot",
+    ),
+    (
+        Motion::Focus,
+        "Focus reveal",
+        "A smooth scale and opacity entrance",
+    ),
 ];
+#[derive(Clone, Copy)]
+pub struct MotionSettings {
+    pub duration: f64,
+    pub amount: f64,
+    pub easing: Easing,
+}
+impl Default for MotionSettings {
+    fn default() -> Self {
+        Self {
+            duration: 0.8,
+            amount: 1.,
+            easing: Easing::Smoother,
+        }
+    }
+}
 impl Motion {
     pub fn apply(self, c: &mut Clip, fps: u32) {
+        self.apply_with(c, fps, MotionSettings::default());
+    }
+    pub fn apply_with(self, c: &mut Clip, fps: u32, settings: MotionSettings) {
         let base = c.transform.clone();
-        // Sample only actual frame times. These remain ordinary linear keyframes,
-        // preserving their path under splitting, trimming, retiming, and export.
-        let frames = (c.duration * fps as f64).floor().max(1.) as u64;
-        let mut frame_times = std::collections::BTreeSet::from([0, frames]);
-        if matches!(self, Self::ZoomIn | Self::ZoomOut | Self::Float) {
-            let samples = frames.min(48);
-            frame_times.extend((0..=samples).map(|i| i * frames / samples));
-        } else {
-            let entrance_frames = ((c.duration * 0.25).min(0.8) * fps as f64).ceil().max(1.) as u64;
-            let entrance_frames = entrance_frames.min(frames);
-            frame_times.extend(0..=entrance_frames);
-            if self == Self::Fade {
-                frame_times.extend((0..=entrance_frames).map(|i| frames - i));
-            }
-        }
-        c.keyframes.clear();
-        for frame in frame_times {
-            let t = frame as f64 / fps as f64;
-            let u = t / c.duration;
-            let entrance = (t / (c.duration * 0.25).min(0.8)).min(1.);
-            let ease = 1. - (1. - entrance).powi(3);
-            let mut v = base.clone();
-            match self {
-                Self::Fade => {
-                    v.opacity *= entrance
-                        .min(((c.duration - t) / (c.duration * 0.25).min(0.8)).clamp(0., 1.))
-                }
-                Self::Rise => {
-                    v.y += 18. * (1. - ease);
-                    v.opacity *= ease;
-                }
-                Self::SlideLeft => {
-                    v.x -= 35. * (1. - ease);
-                    v.opacity *= ease;
-                }
-                Self::SlideRight => {
-                    v.x += 35. * (1. - ease);
-                    v.opacity *= ease;
-                }
-                Self::Pop => {
-                    let x = entrance - 1.;
-                    let overshoot = 1. + 2.70158 * x.powi(3) + 1.70158 * x.powi(2);
-                    v.scale *= 0.6 + 0.4 * overshoot;
-                    v.opacity *= ease;
-                }
-                Self::ZoomIn => v.scale *= 1. + u * 0.15,
-                Self::ZoomOut => v.scale *= 1.15 - u * 0.15,
-                Self::Float => v.y -= 3. * (u * std::f64::consts::TAU).sin(),
-                Self::Spin => {
-                    v.rotation -= 45. * (1. - ease);
-                    v.opacity *= ease;
-                }
-            }
-            v.x = v.x.clamp(-100., 200.);
-            v.y = v.y.clamp(-100., 200.);
-            v.scale = v.scale.clamp(0.05, 4.);
-            v.rotation = v.rotation.clamp(-360., 360.);
-            c.keyframes.push(Keyframe {
-                time: t,
-                transform: v,
+        let amount = settings.amount.clamp(0.05, 2.);
+        let entrance = settings.duration.max(1. / fps as f64).min(c.duration);
+        let ease = settings.easing;
+        let mut keys = vec![];
+        let mut add = |time: f64,
+                       mut value: crate::model::Transform,
+                       easing: Easing,
+                       path: Option<MotionPath>| {
+            value.x = value.x.clamp(-100., 200.);
+            value.y = value.y.clamp(-100., 200.);
+            value.scale = value.scale.clamp(0.05, 4.);
+            value.rotation = value.rotation.clamp(-360., 360.);
+            keys.push(Keyframe {
+                time,
+                transform: value,
+                easing,
+                path,
+                ..Keyframe::default()
             });
-            // Remove a middle sample when the same straight segment already expresses it.
-            while c.keyframes.len() >= 3 {
-                let n = c.keyframes.len();
-                let (a, b, d) = (
-                    &c.keyframes[n - 3],
-                    &c.keyframes[n - 2],
-                    &c.keyframes[n - 1],
-                );
-                let f = (b.time - a.time) / (d.time - a.time);
-                let straight = [
-                    (a.transform.x, b.transform.x, d.transform.x),
-                    (a.transform.y, b.transform.y, d.transform.y),
-                    (a.transform.scale, b.transform.scale, d.transform.scale),
-                    (
-                        a.transform.rotation,
-                        b.transform.rotation,
-                        d.transform.rotation,
-                    ),
-                    (
-                        a.transform.opacity,
-                        b.transform.opacity,
-                        d.transform.opacity,
-                    ),
-                ]
-                .iter()
-                .all(|(a, b, d)| (a + (d - a) * f - b).abs() < 1e-10);
-                if !straight {
-                    break;
+        };
+        match self {
+            Self::ZoomIn | Self::ZoomOut | Self::Drift => {
+                let mut a = base.clone();
+                let mut b = base.clone();
+                if self == Self::ZoomOut {
+                    a.scale *= 1. + 0.15 * amount;
+                } else {
+                    b.scale *= 1. + 0.15 * amount;
                 }
-                c.keyframes.remove(n - 2);
+                if self == Self::Drift {
+                    a.x -= 4. * amount;
+                    b.x += 4. * amount;
+                    a.y += 2. * amount;
+                    b.y -= 2. * amount;
+                }
+                add(0., a, ease, None);
+                add(c.duration, b, Easing::Linear, None);
+            }
+            Self::Float | Self::Pulse => {
+                for (u, offset) in [(0., 0.), (0.25, 1.), (0.75, -1.), (1., 0.)] {
+                    let mut value = base.clone();
+                    if self == Self::Float {
+                        value.y -= 3. * amount * offset;
+                    } else {
+                        value.scale *= 1. + 0.08 * amount * offset;
+                    }
+                    add(c.duration * u, value, Easing::Smooth, None);
+                }
+            }
+            Self::Orbit => {
+                let radius = 8. * amount;
+                let k = radius * 0.5522847498;
+                let points = [
+                    (radius, 0.),
+                    (0., radius),
+                    (-radius, 0.),
+                    (0., -radius),
+                    (radius, 0.),
+                ];
+                let controls = [
+                    ([radius, k], [k, radius]),
+                    ([-k, radius], [-radius, k]),
+                    ([-radius, -k], [-k, -radius]),
+                    ([k, -radius], [radius, -k]),
+                ];
+                for (i, (x, y)) in points.into_iter().enumerate() {
+                    let mut v = base.clone();
+                    v.x += x;
+                    v.y += y;
+                    let path = controls.get(i).map(|(a, b)| MotionPath {
+                        control1: [
+                            (base.x + a[0]).clamp(-100., 200.),
+                            (base.y + a[1]).clamp(-100., 200.),
+                        ],
+                        control2: [
+                            (base.x + b[0]).clamp(-100., 200.),
+                            (base.y + b[1]).clamp(-100., 200.),
+                        ],
+                    });
+                    add(c.duration * i as f64 / 4., v, Easing::Linear, path);
+                }
+            }
+            Self::Fade => {
+                let t = entrance.min(c.duration / 2.);
+                let mut invisible = base.clone();
+                invisible.opacity = 0.;
+                add(0., invisible.clone(), ease, None);
+                add(t, base.clone(), Easing::Linear, None);
+                if c.duration - t > t + 1e-9 {
+                    add(c.duration - t, base.clone(), ease, None);
+                } else if let Some(k) = keys.last_mut() {
+                    k.easing = ease;
+                }
+                keys.push(Keyframe {
+                    time: c.duration,
+                    transform: invisible,
+                    ..Keyframe::default()
+                });
+            }
+            _ => {
+                let mut from = base.clone();
+                from.opacity = 0.;
+                let mut path = None;
+                match self {
+                    Self::Rise => from.y += 18. * amount,
+                    Self::SlideLeft => from.x -= 35. * amount,
+                    Self::SlideRight => from.x += 35. * amount,
+                    Self::Spin => from.rotation -= 45. * amount,
+                    Self::Pop | Self::Focus => from.scale *= 1. - 0.4 * amount,
+                    Self::Arc => {
+                        from.x -= 35. * amount;
+                        from.y += 15. * amount;
+                        path = Some(MotionPath {
+                            control1: [
+                                (base.x - 30. * amount).clamp(-100., 200.),
+                                (base.y - 30. * amount).clamp(-100., 200.),
+                            ],
+                            control2: [
+                                (base.x - 10. * amount).clamp(-100., 200.),
+                                (base.y - 20. * amount).clamp(-100., 200.),
+                            ],
+                        });
+                    }
+                    _ => {}
+                }
+                add(0., from, ease, path);
+                if self == Self::Pop {
+                    let mut overshoot = base.clone();
+                    overshoot.scale *= 1. + 0.08 * amount;
+                    add(entrance * 0.7, overshoot, Easing::Smooth, None);
+                }
+                add(entrance, base.clone(), Easing::Linear, None);
+                if c.duration > entrance + 1e-9 {
+                    add(c.duration, base.clone(), Easing::Linear, None);
+                }
             }
         }
+        keys.sort_by(|a, b| a.time.total_cmp(&b.time));
+        keys.dedup_by(|a, b| (a.time - b.time).abs() < 1e-10);
+        c.keyframes = keys;
     }
 }
 
@@ -284,8 +382,32 @@ pub enum Scene {
     Forces,
     BuildStep,
     FlightData,
+    Orbit,
+    Trajectory,
+    Signal,
+    Comparison,
 }
 pub const SCENES: &[(Scene, &str, &str)] = &[
+    (
+        Scene::Orbit,
+        "Orbital mechanics",
+        "Staggered orbital diagram and explanatory label",
+    ),
+    (
+        Scene::Trajectory,
+        "Flight trajectory",
+        "Revealing trajectory, telemetry and measurement",
+    ),
+    (
+        Scene::Signal,
+        "Signal and response",
+        "Waveform and a smooth data-curve reveal",
+    ),
+    (
+        Scene::Comparison,
+        "Design comparison",
+        "Coordinated side-by-side data cards",
+    ),
     (
         Scene::Forces,
         "Rocket forces",
@@ -324,6 +446,35 @@ impl Scene {
             ..Clip::default()
         };
         let mut clips = match self {
+            Self::Orbit => vec![
+                graphic(Graphic::Orbit, "ORBITAL MECHANICS", 37., 48., 0.8),
+                graphic(
+                    Graphic::Callout,
+                    "VELOCITY + GRAVITY\nA continuously falling trajectory",
+                    70.,
+                    40.,
+                    0.65,
+                ),
+            ],
+            Self::Trajectory => vec![
+                graphic(Graphic::Trajectory, "CONTROLLED DESCENT", 40., 50., 0.85),
+                graphic(Graphic::Stat, "LANDING ERROR\n0.4 m", 78., 45., 0.65),
+            ],
+            Self::Signal => vec![
+                graphic(Graphic::Wave, "CONTROL INPUT", 50., 30., 0.8),
+                graphic(Graphic::Chart, "ATTITUDE RESPONSE", 50., 72., 0.8),
+            ],
+            Self::Comparison => vec![
+                graphic(Graphic::Stat, "DESIGN A\n124 g", 27., 45., 0.75),
+                graphic(Graphic::Stat, "DESIGN B\n98 g", 73., 45., 0.75),
+                graphic(
+                    Graphic::Comparison,
+                    "REFERENCE MASS\nOPTIMIZED MASS",
+                    50.,
+                    80.,
+                    0.6,
+                ),
+            ],
             Self::Forces => {
                 let rocket = graphic(Graphic::Rocket, "Rocket airframe", 40., 50., 0.9);
                 let mut arrow = graphic(Graphic::Arrow, "Thrust vector", 63., 50., 0.55);
@@ -347,8 +498,26 @@ impl Scene {
                 ),
             ],
         };
-        for c in &mut clips {
-            Motion::Rise.apply(c, fps);
+        // Stagger entrances while keeping the scene's shared six-second end.
+        for (i, c) in clips.iter_mut().enumerate() {
+            let delay = (i as f64 * 0.22 * fps as f64).round() / fps as f64;
+            c.start += delay;
+            c.duration -= delay;
+            if matches!(
+                c.graphic,
+                Graphic::Trajectory
+                    | Graphic::Wave
+                    | Graphic::Chart
+                    | Graphic::Comparison
+                    | Graphic::Progress
+                    | Graphic::Orbit
+            ) {
+                c.reveal = Reveal::LeftToRight;
+                c.reveal_duration = 1.6;
+                Motion::Fade.apply(c, fps);
+            } else {
+                Motion::Rise.apply(c, fps);
+            }
         }
         clips
     }

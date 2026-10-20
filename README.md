@@ -67,6 +67,14 @@ The bundled tools are FFmpeg 7.1.5 with static x264 and SDL2, built from pinned,
 
 [Windows CI](.github/workflows/windows.yml) builds the native app, tests editing, exercises the bundled media tools, and uploads a complete offline ZIP. Its Windows runtime checks must pass before treating that platform as verified. Code signing, installers, and automatic updates are not implemented.
 
+## Animation and explanation videos
+
+**Motion Studio** adds editable timing curves and 2D Bézier motion paths, fourteen configurable motion presets, animation copy/paste with duration fitting, reversal, and smooth wipe/iris reveals. Easing and paths survive cuts, trims, ripple deletion and retiming. Generated motion is evaluated continuously at the project's output frame rate.
+
+The graphics library now includes eighteen types and seven staggered explanation scenes. Data curves accept a two-column CSV and embed measured values in `.frame` projects. Text mattes place footage inside large multiline lettering. **Detach audio** creates a separately editable source-audio clip for J/L cuts.
+
+See the **[timestamped reference breakdown and practical production guide](docs/animation-guide.md)** for the uploaded self-landing-satellite video, feature mappings, instructions, and precise limits. [Motion Studio screenshot](docs/screenshots/animation.png).
+
 ## Editing workflow
 
 The app opens an original illustrated rocket project so its controls can be tried immediately. Demo images are sample artwork rather than camera footage.
@@ -75,9 +83,9 @@ The app opens an original illustrated rocket project so its controls can be trie
 - **Arrange:** add a library item with `+`, double-click it, or drag it to a timeline track. Drag clips to move; drag their edges to trim. Properties also provides timing and track assignment. Footage, B-roll, titles/graphics, voiceover, and music have five editable tracks.
 - **Cut:** `S` splits at the playhead. Arrow keys step one project frame; Shift + arrows step ten. Remove Frames deletes a selected time interval across tracks and closes the gap. Undo and redo cover editing and property changes.
 - **Retime:** use Properties → Timing to enter a positive speed multiplier or target duration. **Four hours into 20 seconds is 720×.** Speed changes preserve the selected source range and rescale animation times. Practical limits are at least one output frame and a 24-hour timeline, rather than a small preset multiplier cap.
-- **Explain:** browse **Graphics** for 14 editable explanation elements, including callouts, measurements, axes, grids, step numbers, telemetry, progress indicators, equations, comparison bars, and rocket diagrams. Customize text, font size, colors, line weight, shape fill, and data values in Properties. Start with a ready-made rocket forces, build chapter, or flight report scene.
-- **Animate:** select any visual layer and open **Motion** for nine presets: soft reveal, rise, slides, pop emphasis, slow push/pull, float, and turn. Smooth entrances are sampled into editable transform keyframes; adjust or remove those keyframes in Properties. Applying a preset replaces that clip’s animation and supports undo. Splitting and retiming preserve the sampled motion path.
-- **Finish:** adjust brightness, contrast, saturation, temperature, blur, ellipse/rectangle masks, and fade/slide/zoom/wipe entrances. Fade also affects the clip's ending and audio. Overlap layers to reveal footage beneath an animated clip.
+- **Explain:** browse **Graphics** for 18 editable explanation elements, including callouts, measurements, axes, grids, step numbers, telemetry cards, progress indicators, equations, comparison bars, trajectories, orbital diagrams, waves and data curves. Customize text, font size, colors, line weight, shape fill, and data values in Properties. Start with one of seven ready-made explanation scenes.
+- **Animate:** select a visual layer and open **Motion** for fourteen presets with entrance timing, intensity and easing controls. Open **Motion Studio** to edit key times, transform channels, timing curves and spatial path handles; copy, fit, reverse or clear motion; and configure smooth reveals. Applying a preset replaces the clip's transform animation and supports undo.
+- **Finish:** adjust brightness, contrast, saturation, temperature, blur, ellipse/rectangle/text masks, and fade/slide/zoom/wipe entrances. Fade also affects the clip's ending and audio. Overlap layers to reveal footage beneath an animated clip.
 - **Export:** choose a resolution, select a new `.mp4` filename, and render H.264/AAC from original media. Progress and cancellation are available. Existing output files are rejected to protect previous renders.
 
 Space plays/pauses, Delete removes a selected clip, Ctrl/Cmd + Z undoes, Ctrl/Cmd + Shift + Z redoes, and Ctrl/Cmd + S saves. Choose **New project** in the project menu to browse 12 format templates with pixel size and fps together: Full HD, UHD/4K, cinematic 24 fps, 60 fps action, Shorts/Reels, square, 4:5 portrait, PAL, and lightweight HD. Click the format badge in the top bar to change an existing project. Settings offers custom even dimensions from 240–3840 pixels and frame rates up to 60 fps. A format change that would make an existing clip shorter than one frame is rejected without modifying the project.
@@ -116,7 +124,7 @@ Open it from the project menu, drop the `.frame` file onto the window, or launch
 
 The document **does not embed footage or caches**. Keep the original files available. Sources under the saved project's folder use relative references: move that folder and its media together to preserve links. Sources elsewhere use their original paths; moving to another drive or computer may require relinking them. This keeps a project small even when its footage spans hundreds of gigabytes. A `.frame` file is a versioned JSON document, capped at 32 MB; old `.frame.json` files remain readable.
 
-Media-free example projects are included in [examples/projects](examples/projects): rocket forces, a build chapter, and a flight report. They open as fully editable timelines and need no imported footage. The Windows ZIP includes them in its **Templates** folder. Regenerate them with `cargo run --locked --example create_templates`.
+Media-free example projects for all seven explanation scenes are included in [examples/projects](examples/projects): orbital mechanics, flight trajectory, signal/response, design comparison, rocket forces, a build chapter, and a flight report. They open as fully editable timelines and need no imported footage. The Windows ZIP includes them in its **Templates** folder. Regenerate them with `cargo run --locked --example create_templates`.
 
 ## Validation
 
@@ -128,6 +136,9 @@ cargo build --locked --release
 ```
 
 The tests include:
+
+- Continuous easing and Bézier paths preserved through key insertion, split, ripple deletion, trim, retime, reversal, fitted paste and JSON round trips; malformed curves/CSV; independent audio detachment.
+- Real rendered animation frames and seeks compared to model samples, reveals in preview/export, footage-filled text mattes, data-driven chart pixels and dense key tracks.
 
 - Headless native UI drawing, keyboard splitting/undo, snapshots, saving pending edits at shutdown, all four workspace modes, and five persistent themes without project mutations.
 - Pure Rust retiming, source offsets, animation-preserving split/ripple edits, malformed project validation, atomic recovery, and library locking.
@@ -155,6 +166,7 @@ For a native-window smoke test in a graphical session:
 ./target/release/frame --ui-smoke graphics.png graphics
 ./target/release/frame --ui-smoke formats.png formats
 ./target/release/frame --ui-smoke themes.png themes
+./target/release/frame --ui-smoke animation.png animation
 ./target/release/frame --ui-smoke graphite.png graphite
 ./target/release/frame --ui-smoke dawn.png dawn
 ```
@@ -163,11 +175,12 @@ This launches the actual OpenGL native window, requests a framebuffer screenshot
 
 ## Current limits
 
-Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, motion tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, plugins, collaboration, an MCP server, hardware video acceleration, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
+Frame is an early working editor, not a Resolve/Premiere replacement. Still missing: optical flow, variable speed ramps, stabilization, motion tracking, arbitrary/Bezier masks, multicam, nested sequences, RAW/log/HDR color management, LUTs, scopes, audio waveforms/EQ/noise reduction, transcription/captions, nested/parented motion compositions, vector stroke tracing/morphing, 3D scenes, transform motion blur, synchronized telemetry channels, plugins, collaboration, an MCP server, hardware video acceleration, signed installers, and large-project performance qualification. Input support depends on the installed FFmpeg build; not every codec/container or protected format is supported. Output is MP4/H.264/AAC.
 
 ## Source layout
 
 - `src/ui.rs`: native workspace, inspector, timeline, dialogs, asynchronous job coordination.
+- `src/animation.rs`, `src/ui/animation.rs`: easing, Bézier paths, CSV validation and native Motion Studio.
 - `src/ui/theme.rs`: centralized contrast palette, semantic accents, surfaces and raised cards.
 - `src/model.rs`, `src/edit.rs`: validated project format and pure edit operations.
 - `src/media.rs`: disk-linked media probing, thumbnail/proxy preparation, embedded demo assets.

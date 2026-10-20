@@ -17,7 +17,7 @@ if ($FfmpegDir) {
         throw "Supply -FfmpegLicenseDir with the license and complete corresponding-source materials for your FFmpeg build."
     }
 }
-cargo test --locked --lib --test editing --test documents
+cargo test --locked --lib --test editing --test documents --test animation
 if ($LASTEXITCODE -ne 0) { throw "Rust editing tests failed." }
 cargo build --locked --release
 if ($LASTEXITCODE -ne 0) { throw "Native Windows build failed." }
@@ -39,8 +39,10 @@ try {
     Copy-Item "README.md", "THIRD-PARTY-LICENSES.txt", "assets/fonts/LICENSE-DejaVu.txt" $packagePath
     Copy-Item "scripts/portable/*" $packagePath
     Copy-Item "examples/projects" (Join-Path $packagePath "Templates") -Recurse
+    Copy-Item "examples/data" (Join-Path $packagePath "Templates/Data") -Recurse
     New-Item -ItemType Directory -Path (Join-Path $packagePath "docs") | Out-Null
     Copy-Item "docs/screenshots" (Join-Path $packagePath "docs/screenshots") -Recurse
+    Copy-Item "docs/*.md", "docs/*.txt" (Join-Path $packagePath "docs")
     $manifest = Get-ChildItem $packagePath -File -Recurse | Sort-Object FullName | ForEach-Object {
         $relative = $_.FullName.Substring($packagePath.Length + 1).Replace('\', '/')
         "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $relative

@@ -1,3 +1,4 @@
+pub mod animation;
 pub mod document;
 pub mod edit;
 pub mod media;

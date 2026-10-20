@@ -1,6 +1,7 @@
 use crate::{
+    animation::{Easing, Reveal},
     media::Asset,
-    model::{Clip, Graphic, Kind, Mask, Project, Transform, Transition},
+    model::{Clip, Graphic, Keyframe, Kind, Mask, Project, Transform, Transition},
     process::{ProcessGroup, command},
     storage::atomic_json,
 };
@@ -43,39 +44,77 @@ fn prop(t: &Transform, p: &str) -> f64 {
         _ => t.opacity,
     }
 }
+fn segment_expression(a: &Keyframe, b: &Keyframe, p: &str, clock: &str) -> String {
+    let (v0, v1) = (prop(&a.transform, p), prop(&b.transform, p));
+    let path = a.path.filter(|_| matches!(p, "x" | "y"));
+    if v0 == v1 && path.is_none() {
+        return v0.to_string();
+    }
+    let u = format!("({clock}-{})/{}", a.time, b.time - a.time);
+    let [lo, hi] = a.domain;
+    let (e0, e1) = (a.easing.sample(lo), a.easing.sample(hi));
+    let fraction = if (e1 - e0).abs() < 1e-14 {
+        a.easing.expression(&u)
+    } else {
+        format!(
+            "(({})-({e0}))/{}",
+            a.easing
+                .expression(&format!("{lo}+{}*clip({u},0,1)", hi - lo)),
+            e1 - e0
+        )
+    };
+    if let Some(path) = path {
+        let axis = usize::from(p == "y");
+        format!(
+            "st(9,({fraction}));pow(1-ld(9),3)*{v0}+3*pow(1-ld(9),2)*ld(9)*{}+3*(1-ld(9))*pow(ld(9),2)*{}+pow(ld(9),3)*{v1}",
+            path.control1[axis], path.control2[axis]
+        )
+    } else {
+        format!("{v0}+({})*({fraction})", v1 - v0)
+    }
+}
 fn animated(c: &Clip, p: &str, clock: &str) -> String {
-    let mut keys = c.keyframes.clone();
+    let mut keys: Vec<_> = c.keyframes.iter().collect();
     keys.sort_by(|a, b| a.time.total_cmp(&b.time));
     if keys.is_empty() {
         return prop(&c.transform, p).to_string();
     }
+    if keys.len() == 1 {
+        return prop(&keys[0].transform, p).to_string();
+    }
     let constant = prop(&keys[0].transform, p);
-    if keys.iter().all(|key| prop(&key.transform, p) == constant) {
+    if keys
+        .iter()
+        .all(|k| prop(&k.transform, p) == constant && (!matches!(p, "x" | "y") || k.path.is_none()))
+    {
         return constant.to_string();
     }
-    let mut out = prop(&keys.last().unwrap().transform, p).to_string();
-    for pair in keys.windows(2).rev() {
-        let (a, b) = (&pair[0], &pair[1]);
-        let (v0, v1) = (prop(&a.transform, p), prop(&b.transform, p));
-        out = format!(
-            "if(lt({clock},{}),{v0}+({})*({clock}-{})/{},{out})",
-            b.time,
-            v1 - v0,
-            a.time,
-            b.time - a.time
-        );
+    // A balanced decision tree avoids FFmpeg's expression recursion limit on dense tracks.
+    fn tree(keys: &[&Keyframe], p: &str, clock: &str) -> String {
+        if keys.len() == 2 {
+            return segment_expression(keys[0], keys[1], p, clock);
+        }
+        let middle = keys.len() / 2;
+        format!(
+            "if(lt({clock},{}),{}, {})",
+            keys[middle].time,
+            tree(&keys[..=middle], p, clock),
+            tree(&keys[middle..], p, clock)
+        )
     }
     format!(
-        "if(lt({clock},{}),{},{out})",
+        "if(lte({clock},{}),{constant},if(gte({clock},{}),{},{}))",
         keys[0].time,
-        prop(&keys[0].transform, p)
+        keys.last().unwrap().time,
+        prop(&keys.last().unwrap().transform, p),
+        tree(&keys, p, clock)
     )
 }
 // Alpha is uniform across a layer, so evaluate it once per output frame.
 // colorchannelmixer has a runtime alpha command; geq would evaluate the whole
 // keyframe expression separately for every pixel of every frame.
 fn opacity_filter(c: &Clip, phase: f64, duration: f64, fps: u32, index: usize) -> String {
-    let mut keys = c.keyframes.clone();
+    let mut keys: Vec<_> = c.keyframes.iter().collect();
     keys.sort_by(|a, b| a.time.total_cmp(&b.time));
     let alpha = |time: f64| {
         if keys.is_empty() {
@@ -85,11 +124,11 @@ fn opacity_filter(c: &Clip, phase: f64, duration: f64, fps: u32, index: usize) -
             return keys[0].transform.opacity;
         }
         for pair in keys.windows(2) {
-            let (a, b) = (&pair[0], &pair[1]);
+            let (a, b) = (pair[0], pair[1]);
             if time <= b.time {
                 return a.transform.opacity
-                    + (b.transform.opacity - a.transform.opacity) * (time - a.time)
-                        / (b.time - a.time);
+                    + (b.transform.opacity - a.transform.opacity)
+                        * a.fraction((time - a.time) / (b.time - a.time));
             }
         }
         keys.last().unwrap().transform.opacity
@@ -164,6 +203,86 @@ pub fn graphic_image(c: &Clip, path: &Path, w: u32, h: u32) -> Result<()> {
             );
         }
         match c.graphic {
+            Graphic::Trajectory => {
+                line(&mut pb, 0.15, 0.8, 0.85, 0.8);
+                pb.move_to(wf * 0.2, hf * 0.75);
+                pb.cubic_to(
+                    wf * 0.33,
+                    hf * 0.05,
+                    wf * 0.6,
+                    hf * 0.12,
+                    wf * 0.78,
+                    hf * 0.75,
+                );
+                line(&mut pb, 0.7, 0.7, 0.78, 0.75);
+                line(&mut pb, 0.78, 0.75, 0.8, 0.62);
+                labels.push((c.text.clone(), c.font_size as f32, 0.5, 0.9, true));
+            }
+            Graphic::Orbit => {
+                pb.push_oval(rect(0.17, 0.22, 0.66, 0.56));
+                pb.push_oval(rect(0.455, 0.42, 0.09, 0.16));
+                pb.push_rect(rect(0.73, 0.28, 0.035, 0.06));
+                line(&mut pb, 0.75, 0.31, 0.82, 0.44);
+                line(&mut pb, 0.82, 0.44, 0.78, 0.41);
+                line(&mut pb, 0.82, 0.44, 0.825, 0.36);
+                labels.push((c.text.clone(), c.font_size as f32, 0.5, 0.9, true));
+            }
+            Graphic::Wave | Graphic::Chart => {
+                line(&mut pb, 0.15, 0.2, 0.15, 0.8);
+                line(&mut pb, 0.15, 0.8, 0.85, 0.8);
+                let mut samples = Vec::new();
+                if c.graphic == Graphic::Chart && c.chart_data.len() >= 2 {
+                    let lo = c.chart_data.first().unwrap()[0];
+                    let hi = c.chart_data.last().unwrap()[0];
+                    let min = c
+                        .chart_data
+                        .iter()
+                        .map(|p| p[1])
+                        .fold(f64::INFINITY, f64::min);
+                    let max = c
+                        .chart_data
+                        .iter()
+                        .map(|p| p[1])
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    for p in &c.chart_data {
+                        samples.push((
+                            0.15 + ((p[0] - lo) / (hi - lo)) as f32 * 0.7,
+                            if max == min {
+                                0.5
+                            } else {
+                                0.75 - ((p[1] - min) / (max - min)) as f32 * 0.5
+                            },
+                        ));
+                    }
+                    labels.push((
+                        format!("{lo:.2} → {hi:.2} s    {min:.2} … {max:.2}"),
+                        c.font_size as f32 * 0.45,
+                        0.5,
+                        0.12,
+                        true,
+                    ));
+                } else {
+                    for i in 0..=160 {
+                        let u = i as f32 / 160.;
+                        let x = 0.15 + u * 0.7;
+                        let y = if c.graphic == Graphic::Wave {
+                            0.5 - (u * std::f32::consts::TAU * 3.).sin() * 0.22
+                        } else {
+                            0.75 - 0.5 * (1. - (-u * 4.).exp())
+                                + 0.1 * (u * 12.).sin() * (-u * 2.).exp()
+                        };
+                        samples.push((x, y));
+                    }
+                }
+                for (i, (x, y)) in samples.into_iter().enumerate() {
+                    if i == 0 {
+                        pb.move_to(x * wf, y * hf);
+                    } else {
+                        pb.line_to(x * wf, y * hf);
+                    }
+                }
+                labels.push((c.text.clone(), c.font_size as f32, 0.5, 0.92, true));
+            }
             Graphic::Arrow => {
                 line(&mut pb, 0.3, 0.5, 0.7, 0.5);
                 line(&mut pb, 0.62, 0.4, 0.7, 0.5);
@@ -671,13 +790,65 @@ pub fn build_graph(
                 chain += &format!(",gblur=sigma={}", c.blur);
             }
         }
-        if c.mask != Mask::None {
+        if c.mask == Mask::Text {
+            let mask_path = folder.join(format!("text-matte-{idx}.png"));
+            let matte = Clip {
+                kind: Kind::Title,
+                text: c.text.clone(),
+                font_size: c.font_size,
+                color: "#ffffff".into(),
+                ..Clip::default()
+            };
+            graphic_image(&matte, &mask_path, w, h)?;
+            let mask_index = index;
+            index += 1;
+            push(
+                &mut args,
+                [
+                    "-loop",
+                    "1",
+                    "-framerate",
+                    &fps.to_string(),
+                    "-t",
+                    &dur.to_string(),
+                    "-threads",
+                    "2",
+                    "-i",
+                ],
+            );
+            args.push(mask_path.into_os_string());
+            chain += &format!(
+                ",split[rgb{idx}][originalalpha{idx}];[originalalpha{idx}]alphaextract[oa{idx}];[{mask_index}:v]format=rgba,alphaextract[matte{idx}];[oa{idx}][matte{idx}]blend=all_mode=multiply[maskedalpha{idx}];[rgb{idx}][maskedalpha{idx}]alphamerge"
+            );
+        }
+        if matches!(c.mask, Mask::Circle | Mask::Rectangle) {
             let mask = if c.mask == Mask::Circle {
                 "lte(pow((X-W/2)/(W*0.28),2)+pow((Y-H/2)/(H*0.45),2),1)"
             } else {
                 "between(X,W*0.2,W*0.8)*between(Y,H*0.15,H*0.85)"
             };
             chain += &format!(",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({mask})'");
+        }
+        if c.reveal != Reveal::None && phase + c.reveal_offset < c.reveal_duration {
+            let clock = format!("(T+{})/{}", phase + c.reveal_offset, c.reveal_duration);
+            let progress = Easing::Smoother.expression(&clock);
+            let mask = match c.reveal {
+                Reveal::LeftToRight => format!("clip(W*({progress})-X,0,1)"),
+                Reveal::BottomToTop => format!("clip(Y-H*(1-({progress}))+1,0,1)"),
+                Reveal::Iris => {
+                    format!("clip(hypot(W,H)*0.5*({progress})-hypot(X-W/2,Y-H/2)+0.5,0,1)")
+                }
+                Reveal::None => unreachable!(),
+            };
+            chain += &format!(",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({mask})'");
+        }
+        // Rotate on a fixed-size input. FFmpeg configures rotate's output bounds
+        // once; putting a variable-size scale before it clips later frames.
+        if c.transform.rotation != 0. || c.keyframes.iter().any(|k| k.transform.rotation != 0.) {
+            chain += &format!(
+                ",rotate=a='({})*PI/180':ow=iw:oh=ih:c=none",
+                animated(c, "rotation", &format!("(t+{phase})"))
+            );
         }
         let mut scale = animated(c, "scale", &format!("(t+{phase})"));
         if c.transition == Transition::Zoom {
@@ -691,12 +862,6 @@ pub fn build_graph(
         {
             chain += &format!(
                 ",scale=w='max(2,trunc({w}*({scale})/2)*2)':h='max(2,trunc({h}*({scale})/2)*2)':eval=frame,format=rgba"
-            );
-        }
-        if c.transform.rotation != 0. || c.keyframes.iter().any(|k| k.transform.rotation != 0.) {
-            chain += &format!(
-                ",rotate=a='({})*PI/180':ow=iw:oh=ih:c=none",
-                animated(c, "rotation", &format!("(t+{phase})"))
             );
         }
         if c.transform.opacity != 1. || c.keyframes.iter().any(|k| k.transform.opacity != 1.) {
@@ -729,12 +894,24 @@ pub fn build_graph(
         filters.push(chain);
         let x = animated(c, "x", &format!("(t-{start}+{phase})"));
         let y = animated(c, "y", &format!("(t-{start}+{phase})"));
-        let mut xe = format!("W*({x})/100-w/2");
+        // Overlay can retain the first input dimensions while an upstream scale
+        // changes size. Compute current bounds explicitly to keep the layer's
+        // anchor fixed throughout a zoom (and after a mid-animation seek).
+        let mut overlay_scale = animated(c, "scale", &format!("(t-{start}+{phase})"));
+        if c.transition == Transition::Zoom {
+            overlay_scale = format!(
+                "({overlay_scale})*(0.8+0.2*min((t-{start}+{phase})/{},1))",
+                c.fade_duration
+            );
+        }
+        let current_w = format!("max(2,trunc({w}*({overlay_scale})/2)*2)");
+        let current_h = format!("max(2,trunc({h}*({overlay_scale})/2)*2)");
+        let mut xe = format!("W*({x})/100-({current_w})/2");
         if c.transition == Transition::Slide {
             xe += &format!("-W*max(1-(t-{start}+{phase})/{fade},0)");
         }
         let next = format!("comp{idx}");
-        filters.push(format!("[{base}][v{idx}]overlay=x='{xe}':y='H*({y})/100-h/2':enable='gte(t,{start})*lt(t,{})':eof_action=pass:repeatlast=0:format=auto[{next}]",start+dur));
+        filters.push(format!("[{base}][v{idx}]overlay=x='{xe}':y='H*({y})/100-({current_h})/2':enable='gte(t,{start})*lt(t,{})':eof_action=pass:repeatlast=0:format=auto[{next}]",start+dur));
         base = next;
     }
     if mode != Mode::PreviewAudio {

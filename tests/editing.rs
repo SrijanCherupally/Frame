@@ -42,6 +42,7 @@ fn split_preserves_source_offset_and_animation() {
                     x: 10.,
                     ..Transform::default()
                 },
+                ..Keyframe::default()
             },
             Keyframe {
                 time: 20.,
@@ -49,6 +50,7 @@ fn split_preserves_source_offset_and_animation() {
                     x: 90.,
                     ..Transform::default()
                 },
+                ..Keyframe::default()
             },
         ],
         ..image_clip("a")
@@ -77,6 +79,7 @@ fn ripple_frames_preserve_animation_on_both_sides() {
                             x: 0.,
                             ..Transform::default()
                         },
+                        ..Keyframe::default()
                     },
                     Keyframe {
                         time: 10.,
@@ -84,6 +87,7 @@ fn ripple_frames_preserve_animation_on_both_sides() {
                             x: 100.,
                             ..Transform::default()
                         },
+                        ..Keyframe::default()
                     },
                 ],
                 ..image_clip("a")

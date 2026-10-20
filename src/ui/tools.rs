@@ -6,6 +6,22 @@ impl FrameApp {
         match view {
             "graphics" => self.tab = Tab::Graphics,
             "motion" => self.tab = Tab::Motion,
+            "animation" => {
+                self.activate_workspace(WorkMode::Motion);
+                self.motion_window = true;
+                if let Some(i) = self.selected_index() {
+                    presets::Motion::Arc.apply(&mut self.project.clips[i], self.project.fps);
+                    self.project.clips[i].keyframes[0].easing = crate::animation::Easing::Bezier {
+                        x1: 0.22,
+                        y1: 0.,
+                        x2: 0.36,
+                        y2: 1.,
+                    };
+                    let time = self.project.clips[i].start + 0.35;
+                    self.seek(time);
+                    self.motion_key = 0;
+                }
+            }
             "themes" => self.theme_window = true,
             "edit" => self.activate_workspace(WorkMode::Edit),
             "color" => self.activate_workspace(WorkMode::Color),
@@ -230,6 +246,17 @@ impl FrameApp {
                 .color(palette().accent),
         );
         ui.label(RichText::new(if index.is_some(){"Choose a motion for your selected clip. Replaces its current keyframes; undo is available."}else{"Select a visual clip on the timeline, then choose its motion."}).small().color(palette().muted));
+        if ui.button("Open Motion Studio →").clicked() {
+            self.motion_window = true;
+        }
+        ui.add_space(8.);
+        card().show(ui,|ui| {
+            section_title(ui,"Preset controls",palette().violet);
+            ui.add(egui::Slider::new(&mut self.motion_settings.duration,0.1..=5.).text("Arrival").suffix(" s"));
+            ui.add(egui::Slider::new(&mut self.motion_settings.amount,0.05..=2.).text("Intensity"));
+            egui::ComboBox::from_id_salt("preset-ease").selected_text(self.motion_settings.easing.name()).show_ui(ui,|ui|{for &(e,name) in crate::animation::EASINGS {ui.selectable_value(&mut self.motion_settings.easing,e,name);}});
+            ui.label(RichText::new("Apply to replace this layer's animation. Slow pans and loops span its full duration.").small().color(palette().muted));
+        });
         ui.add_space(10.);
         for (number, &(motion, label, description)) in presets::MOTIONS.iter().enumerate() {
             let accent = [
@@ -266,7 +293,11 @@ impl FrameApp {
             ui.add_space(5.);
             if applied && let Some(i) = index {
                 self.history.remember(&self.project);
-                motion.apply(&mut self.project.clips[i], self.project.fps);
+                motion.apply_with(
+                    &mut self.project.clips[i],
+                    self.project.fps,
+                    self.motion_settings,
+                );
                 self.seek(self.project.clips[i].start);
                 self.modified();
                 self.notify(format!(
@@ -405,6 +436,7 @@ impl FrameApp {
     }
 
     pub(super) fn appearance_controls(&mut self, ui: &mut egui::Ui, c: &mut Clip) {
+        self.chart_controls(ui, c);
         if c.kind != Kind::Graphic {
             return;
         }

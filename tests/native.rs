@@ -156,6 +156,7 @@ fn render_transitions_masks_keyframes_and_audio() {
                         scale: 0.8,
                         ..Transform::default()
                     },
+                    ..Keyframe::default()
                 },
                 Keyframe {
                     time: 0.4,
@@ -163,6 +164,7 @@ fn render_transitions_masks_keyframes_and_audio() {
                         x: 60.,
                         ..Transform::default()
                     },
+                    ..Keyframe::default()
                 },
             ],
             ..Clip::default()
@@ -568,7 +570,12 @@ fn explanation_graphics_are_visible_and_animated_scenes_export() {
     for (index, &(scene, _, _)) in frame_studio::presets::SCENES.iter().enumerate() {
         let mut clips = scene.clips(0., 30);
         for c in &mut clips {
-            c.duration = 0.6;
+            c.start *= 0.1;
+            c.duration *= 0.1;
+            c.reveal_duration *= 0.1;
+            for key in &mut c.keyframes {
+                key.time *= 0.1;
+            }
         }
         let p = Project {
             width: 320,
@@ -658,10 +665,12 @@ fn animated_opacity_matches_static_alpha_and_seeking_mid_animation() {
                     opacity: 0.,
                     ..Transform::default()
                 },
+                ..Keyframe::default()
             },
             Keyframe {
                 time: 1.,
                 transform: Transform::default(),
+                ..Keyframe::default()
             },
         ],
         ..Clip::default()
